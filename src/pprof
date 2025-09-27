@@ -4907,7 +4907,7 @@ sub MapToSymbols {
       } else {
 	# MapSymbolsWithNM tags each routine with its starting address,
 	# useful in case the image has multiple occurrences of this
-	# routine.  (It uses a syntax that resembles template paramters,
+	# routine.  (It uses a syntax that resembles template parameters,
 	# that are automatically stripped out by ShortFunctionName().)
 	# addr2line does not provide the same information.  So we check
 	# if nm disambiguated our symbol, and if so take the annotated
@@ -5220,7 +5220,7 @@ sub GetProcedureBoundariesViaNm {
 
       # Tag this routine with the starting address in case the image
       # has multiple occurrences of this routine.  We use a syntax
-      # that resembles template paramters that are automatically
+      # that resembles template parameters that are automatically
       # stripped out by ShortFunctionName()
       $this_routine .= "<$start_val>";
 
