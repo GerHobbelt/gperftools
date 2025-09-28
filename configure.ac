@@ -4,12 +4,12 @@
 # make sure we're interpreted by some minimal autoconf
 AC_PREREQ([2.69])
 
-AC_INIT([gperftools],[2.15],[gperftools@googlegroups.com])
+AC_INIT([gperftools],[2.15.90],[gperftools@googlegroups.com])
 # Update this value for every release!  (A:B:C will map to foo.so.(A-C).C.B)
 # http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-TCMALLOC_SO_VERSION=9:16:5
-PROFILER_SO_VERSION=5:11:5
-TCMALLOC_AND_PROFILER_SO_VERSION=10:11:6
+TCMALLOC_SO_VERSION=9:17:5
+PROFILER_SO_VERSION=5:12:5
+TCMALLOC_AND_PROFILER_SO_VERSION=10:12:6
 
 AC_SUBST(TCMALLOC_SO_VERSION)
 AC_SUBST(PROFILER_SO_VERSION)
@@ -20,7 +20,7 @@ AC_SUBST(TCMALLOC_AND_PROFILER_SO_VERSION)
 AC_CONFIG_SRCDIR(README)
 AC_CONFIG_MACRO_DIR([m4])
 AC_CANONICAL_HOST
-AM_INIT_AUTOMAKE([dist-zip foreign])
+AM_INIT_AUTOMAKE([dist-zip foreign tar-ustar])
 AC_CONFIG_HEADERS([src/config.h])
 
 AM_MAINTAINER_MODE()
@@ -254,7 +254,6 @@ AC_MSG_RESULT($ac_cv___attribute__aligned_fn)
 AC_CHECK_TYPES([struct mallinfo],,, [#include <malloc.h>])
 AC_CHECK_TYPES([struct mallinfo2],,, [#include <malloc.h>])
 AC_CHECK_FUNCS(sbrk)            # for tcmalloc to get memory
-AC_CHECK_FUNCS(__sbrk)          # for tcmalloc to get memory
 AC_CHECK_FUNCS(geteuid)         # for turning off services when run as root
 AC_CHECK_HEADERS(features.h)    # for vdso_support.h, __GLIBC__ macros
 AC_CHECK_HEADERS(malloc.h)      # some systems define stuff there, others not
@@ -276,6 +275,18 @@ AC_CHECK_HEADERS(asm/ptrace.h)           # get ptrace macros, e.g. PT_NIP
 
 # check for socketpair, some system, such as QNX, need link in an socket library to use it
 AC_SEARCH_LIBS([socketpair], [socket])
+
+REGEX_LIBS=
+# "sufficiently unix" systems need regexec for unit tests
+if test "x$need_nanosleep" = xyes; then
+  save_LIBS="$LIBS"
+  LIBS="$REGEX_LIBS"
+  # QNX needs -lregex; but lets test just in case
+  AC_SEARCH_LIBS([regexec], [regex], [], [AC_MSG_ERROR([failed to locate regexec() (used for tests)])])
+  REGEX_LIBS="$LIBS"
+  LIBS="$save_LIBS"
+fi
+AC_SUBST(REGEX_LIBS)
 
 # We override a lot of memory allocation routines, not all of which are
 # standard.  For those the system doesn't declare, we'll declare ourselves.
@@ -316,10 +327,13 @@ esac
 # we're dealing with unknown system, we have to check if GetPC
 # actually works. But don't bother if we're not doing cpu-profiling.
 if test "$enable_cpu_profiler" = yes; then
-  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include "src/getpc.h"]], [GetPC({})])],
+  OLD_CXXFLAGS="$CXXFLAGS"
+  CXXFLAGS="$CXXFLAGS -I$srcdir/src"
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include "getpc.h"]], [GetPC({})])],
                     [],
                     [AC_MSG_WARN(Could not find the PC.  Will not try to compile libprofiler...)
                      enable_cpu_profiler=no])
+  CXXFLAGS="$OLD_CXXFLAGS"
 fi
 
 # Some tests test the behavior of .so files, and only make sense for dynamic.

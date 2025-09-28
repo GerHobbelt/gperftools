@@ -128,6 +128,7 @@
 #include "thread_cache.h"      // for ThreadCache
 #include "thread_cache_ptr.h"
 
+#include "malloc_backtrace.h"
 #include "maybe_emergency_malloc.h"
 #include "testing_portal.h"
 
@@ -308,17 +309,12 @@ ATTRIBUTE_NOINLINE void InvalidFree(void* ptr) {
   Log(kCrash, __FILE__, __LINE__, "Attempt to free invalid pointer", ptr);
 }
 
-size_t InvalidGetSizeForRealloc(const void* old_ptr) {
-  Log(kCrash, __FILE__, __LINE__,
-      "Attempt to realloc invalid pointer", old_ptr);
-  return 0;
-}
-
 size_t InvalidGetAllocatedSize(const void* ptr) {
   Log(kCrash, __FILE__, __LINE__,
       "Attempt to get the size of an invalid pointer", ptr);
   return 0;
 }
+
 }  // unnamed namespace
 
 // Extract interesting stats
@@ -596,11 +592,12 @@ public:
   }
 
   void WithEmergencyMallocEnabled(FunctionRef<void()> body) override {
-#if ENABLE_EMERGENCY_MALLOC
-    StacktraceScope scope;
-    CHECK(scope.IsStacktraceAllowed());
-    body();
-#endif
+    auto body_adaptor = [body] (bool stacktrace_allowed) {
+      CHECK(stacktrace_allowed);
+      body();
+    };
+    FunctionRef<void(bool)> ref{body_adaptor};
+    ThreadCachePtr::WithStacktraceScope(ref.fn, ref.data);
   }
 
   std::string_view GetHeapCheckFlag() override {
@@ -682,7 +679,7 @@ class TCMallocImplementation : public MallocExtension {
         table.AddTrace(*reinterpret_cast<StackTrace*>(s->objects));
       }
     }
-    *sample_period = ThreadCachePtr::GetSlow()->GetSamplePeriod();
+    *sample_period = ThreadCachePtr::Grab()->GetSamplePeriod();
     return table.ReadStackTracesAndClear(); // grabs and releases pageheap_lock
   }
 
@@ -700,7 +697,7 @@ class TCMallocImplementation : public MallocExtension {
   }
 
   virtual size_t GetThreadCacheSize() {
-    ThreadCache* tc = ThreadCachePtr::GetFast();
+    ThreadCache* tc = ThreadCachePtr::GetIfPresent();
     if (!tc)
       return 0;
     return tc->Size();
@@ -836,6 +833,11 @@ class TCMallocImplementation : public MallocExtension {
       return true;
     }
 
+    if (strcmp(name, "tcmalloc.min_per_thread_cache_bytes") == 0) {
+      *value = ThreadCache::min_per_thread_cache_size();
+      return true;
+    }
+
     if (strcmp(name, "tcmalloc.current_total_thread_cache_bytes") == 0) {
       TCMallocStats stats;
       ExtractStats(&stats, NULL, NULL, NULL);
@@ -876,6 +878,11 @@ class TCMallocImplementation : public MallocExtension {
     if (strcmp(name, "tcmalloc.max_total_thread_cache_bytes") == 0) {
       SpinLockHolder l(Static::pageheap_lock());
       ThreadCache::set_overall_thread_cache_size(value);
+      return true;
+    }
+
+    if (strcmp(name, "tcmalloc.min_per_thread_cache_bytes") == 0) {
+      ThreadCache::set_min_per_thread_cache_size(value);
       return true;
     }
 
@@ -1162,13 +1169,8 @@ size_t TCMallocImplementation::GetEstimatedAllocatedSize(size_t size) {
 // The constructor allocates an object to ensure that initialization
 // runs before main(), and therefore we do not have a chance to become
 // multi-threaded before initialization.  We also create the TSD key
-// here.  Presumably by the time this constructor runs, glibc is in
+// here.  Presumably by the time this constructor runs, runtime is in
 // good enough shape to handle tcmalloc::CreateTlsKey().
-//
-// The constructor also takes the opportunity to tell STL to use
-// tcmalloc.  We want to do this early, before construct time, so
-// all user STL allocations go through tcmalloc (which works really
-// well for STL).
 //
 // The destructor prints stats when the program exits.
 static int tcmallocguard_refcount;
@@ -1457,12 +1459,12 @@ static void *nop_oom_handler(size_t size) {
 }
 
 ALWAYS_INLINE void* do_malloc(size_t size) {
-  if (PREDICT_FALSE(tcmalloc::IsUseEmergencyMalloc())) {
+  // note: it will force initialization of malloc if necessary
+  ThreadCachePtr cache_ptr = ThreadCachePtr::Grab();
+  if (PREDICT_FALSE(cache_ptr.IsEmergencyMallocEnabled())) {
     return tcmalloc::EmergencyMalloc(size);
   }
 
-  // note: it will force initialization of malloc if necessary
-  ThreadCachePtr cache_ptr = tcmalloc::ThreadCachePtr::GetSlow();
   uint32_t cl;
 
   ASSERT(Static::IsInited());
@@ -1503,7 +1505,19 @@ ALWAYS_INLINE void* do_calloc(size_t n, size_t elem_size) {
 
   void* result = do_malloc_or_cpp_alloc(size);
   if (result != NULL) {
-    memset(result, 0, tc_nallocx(size, 0));
+    size_t total_size = size;
+    if (!tcmalloc::IsEmergencyPtr(result)) {
+      // On windows we support recalloc (which was apparently
+      // originally introduced in Irix). In order for recalloc to work
+      // we need to zero-out not just the size we were asked for, but
+      // entire usable size. See also
+      // https://github.com/gperftools/gperftools/pull/994.
+      //
+      // But we can do it only when not dealing with emergency
+      // malloc-ed memory.
+      total_size = tc_nallocx(size, 0);
+    }
+    memset(result, 0, total_size);
   }
   return result;
 }
@@ -1558,7 +1572,7 @@ ALWAYS_INLINE
 void do_free_with_callback(void* ptr,
                            void (*invalid_free_fn)(void*),
                            bool use_hint, size_t size_hint) {
-  ThreadCache* heap = ThreadCachePtr::GetFast();
+  ThreadCache* heap = ThreadCachePtr::GetIfPresent();
 
   const PageID p = reinterpret_cast<uintptr_t>(ptr) >> kPageShift;
   uint32_t cl;
@@ -1699,11 +1713,6 @@ ALWAYS_INLINE void* do_realloc_with_callback(
     MallocHook::InvokeNewHook(old_ptr, new_size);
     return old_ptr;
   }
-}
-
-ALWAYS_INLINE void* do_realloc(void* old_ptr, size_t new_size) {
-  return do_realloc_with_callback(old_ptr, new_size,
-                                  &InvalidFree, &InvalidGetSizeForRealloc);
 }
 
 static ALWAYS_INLINE
@@ -1954,7 +1963,7 @@ static void * malloc_fast_path(size_t size) {
     return tcmalloc::dispatch_allocate_full<OOMHandler>(size);
   }
 
-  ThreadCache *cache = ThreadCachePtr::GetFast();
+  ThreadCache *cache = ThreadCachePtr::GetIfPresent();
 
   if (PREDICT_FALSE(cache == NULL)) {
     return tcmalloc::dispatch_allocate_full<OOMHandler>(size);
@@ -2055,9 +2064,6 @@ extern "C" PERFTOOLS_DLL_DECL void tc_deletearray_sized(void *p, size_t size) PE
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_calloc(size_t n,
                                               size_t elem_size) PERFTOOLS_NOTHROW {
-  if (tcmalloc::IsUseEmergencyMalloc()) {
-    return tcmalloc::EmergencyCalloc(n, elem_size);
-  }
   void* result = do_calloc(n, elem_size);
   MallocHook::InvokeNewHook(result, n * elem_size);
   return result;
@@ -2087,7 +2093,14 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_realloc(void* old_ptr,
   if (PREDICT_FALSE(tcmalloc::IsEmergencyPtr(old_ptr))) {
     return tcmalloc::EmergencyRealloc(old_ptr, new_size);
   }
-  return do_realloc(old_ptr, new_size);
+
+  auto invalid_get_size = +[] (const void* old_ptr) -> size_t {
+    Log(kCrash, __FILE__, __LINE__,
+        "Attempt to realloc invalid pointer", old_ptr);
+    return 0;
+  };
+  return do_realloc_with_callback(old_ptr, new_size,
+                                  &InvalidFree, invalid_get_size);
 }
 
 extern "C" PERFTOOLS_DLL_DECL CACHELINE_ALIGNED_FN

@@ -73,6 +73,7 @@
 #include "base/spinlock.h"
 #include "base/static_storage.h"
 #include "base/threading.h"
+#include "malloc_backtrace.h"
 #include "malloc_hook-inl.h"
 #include "maybe_emergency_malloc.h"
 #include "safe_strerror.h"
@@ -200,7 +201,7 @@ struct MallocBlockQueueEntry {
   MallocBlockQueueEntry() : block(NULL), size(0),
                             num_deleter_pcs(0) {}
   MallocBlockQueueEntry(MallocBlock* b, size_t s) : block(b), size(s) {
-    if (FLAGS_max_free_queue_size != 0 && b != NULL) {
+    if (FLAGS_max_free_queue_size != 0 && b != nullptr) {
       // Adjust the number of frames to skip (4) if you change the
       // location of this call.
       num_deleter_pcs =
@@ -208,7 +209,7 @@ struct MallocBlockQueueEntry {
           deleter_pcs,
           sizeof(deleter_pcs) / sizeof(deleter_pcs[0]),
           4);
-      deleter_threadid = std::this_thread::get_id();
+      deleter_threadid = tcmalloc::SelfThreadId();
     } else {
       num_deleter_pcs = 0;
     }
@@ -223,7 +224,7 @@ struct MallocBlockQueueEntry {
   // overhead under the LP64 data model.)
   void* deleter_pcs[16];
   int num_deleter_pcs;
-  std::thread::id deleter_threadid;
+  uintptr_t deleter_threadid;
 };
 
 class MallocBlock {
@@ -413,8 +414,10 @@ class MallocBlock {
     alloc_map_lock_.Unlock();
     // clear us
     const size_t size = real_size();
+#if !defined(TCMALLOC_DONT_VERIFY_SIZE)
     RAW_CHECK(!given_size || given_size == size1_,
               "right size must be passed to sized delete");
+#endif
     memset(this, kMagicDeletedByte, size);
     return size;
   }
@@ -693,8 +696,8 @@ class MallocBlock {
     const MallocBlock* b = queue_entry.block;
     const size_t size = queue_entry.size;
     if (queue_entry.num_deleter_pcs > 0) {
-      TracePrintf(STDERR_FILENO, "Deleted by thread %" GPRIxTHREADID "\n",
-                  PRINTABLE_THREADID(queue_entry.deleter_threadid));
+      TracePrintf(STDERR_FILENO, "Deleted by thread %zx\n",
+                  queue_entry.deleter_threadid);
 
       // We don't want to allocate or deallocate memory here, so we use
       // placement-new.  It's ok that we don't destroy this, since we're
@@ -1007,8 +1010,8 @@ static SpinLock malloc_trace_lock;
   do {                                                                               \
     if (FLAGS_malloctrace) {                                                         \
       SpinLockHolder l(&malloc_trace_lock);                                          \
-      TracePrintf(TraceFd(), "%s\t%zu\t%p\t%" GPRIuTHREADID,                         \
-                  name, size, addr, PRINTABLE_THREADID(std::this_thread::get_id())); \
+      TracePrintf(TraceFd(), "%s\t%zu\t%p\t%zu",                                     \
+                  name, size, addr, tcmalloc::SelfThreadId());                       \
       TraceStack();                                                                  \
       TracePrintf(TraceFd(), "\n");                                                  \
     }                                                                                \
@@ -1034,6 +1037,10 @@ void __malloctrace_write(const char *buf, size_t size) {
 // General debug allocation/deallocation
 
 static inline void* DebugAllocate(size_t size, int type) {
+  if (PREDICT_FALSE(tcmalloc::ThreadCachePtr::Grab().IsEmergencyMallocEnabled())) {
+    return tcmalloc::EmergencyMalloc(size);
+  }
+
 #if defined(__APPLE__)
   // OSX malloc zones integration has some odd behavior. When
   // GetAllocatedSize returns 0 it appears to assume something wrong
@@ -1050,6 +1057,10 @@ static inline void* DebugAllocate(size_t size, int type) {
 }
 
 static inline void DebugDeallocate(void* ptr, int type, size_t given_size) {
+  if (PREDICT_FALSE(tcmalloc::IsEmergencyPtr(ptr))) {
+    return tcmalloc::EmergencyFree(ptr);
+  }
+
   MALLOC_TRACE("free",
                (ptr != 0 ? MallocBlock::FromRawPointer(ptr)->actual_data_size(ptr) : 0),
                ptr);
@@ -1247,18 +1258,12 @@ static void force_frame() {
 }
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_malloc(size_t size) PERFTOOLS_NOTHROW {
-  if (tcmalloc::IsUseEmergencyMalloc()) {
-    return tcmalloc::EmergencyMalloc(size);
-  }
   void* ptr = do_debug_malloc_or_debug_cpp_alloc(size);
   MallocHook::InvokeNewHook(ptr, size);
   return ptr;
 }
 
 extern "C" PERFTOOLS_DLL_DECL void tc_free(void* ptr) PERFTOOLS_NOTHROW {
-  if (tcmalloc::IsEmergencyPtr(ptr)) {
-    return tcmalloc::EmergencyFree(ptr);
-  }
   MallocHook::InvokeDeleteHook(ptr);
   DebugDeallocate(ptr, MallocBlock::kMallocType, 0);
   force_frame();
@@ -1271,33 +1276,24 @@ extern "C" PERFTOOLS_DLL_DECL void tc_free_sized(void *ptr, size_t size) PERFTOO
 }
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_calloc(size_t count, size_t size) PERFTOOLS_NOTHROW {
-  if (tcmalloc::IsUseEmergencyMalloc()) {
-    return tcmalloc::EmergencyCalloc(count, size);
-  }
   // Overflow check
   const size_t total_size = count * size;
   if (size != 0 && total_size / size != count) return NULL;
 
   void* block = do_debug_malloc_or_debug_cpp_alloc(total_size);
-  MallocHook::InvokeNewHook(block, total_size);
   if (block)  memset(block, 0, total_size);
+  MallocHook::InvokeNewHook(block, total_size);
   return block;
 }
 
 extern "C" PERFTOOLS_DLL_DECL void tc_cfree(void* ptr) PERFTOOLS_NOTHROW {
-  if (tcmalloc::IsEmergencyPtr(ptr)) {
-    return tcmalloc::EmergencyFree(ptr);
-  }
   MallocHook::InvokeDeleteHook(ptr);
   DebugDeallocate(ptr, MallocBlock::kMallocType, 0);
   force_frame();
 }
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_realloc(void* ptr, size_t size) PERFTOOLS_NOTHROW {
-  if (tcmalloc::IsEmergencyPtr(ptr)) {
-    return tcmalloc::EmergencyRealloc(ptr, size);
-  }
-  if (ptr == NULL) {
+  if (ptr == nullptr) {
     ptr = do_debug_malloc_or_debug_cpp_alloc(size);
     MallocHook::InvokeNewHook(ptr, size);
     return ptr;
@@ -1305,15 +1301,20 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_realloc(void* ptr, size_t size) PERFTOOLS
   if (size == 0) {
     MallocHook::InvokeDeleteHook(ptr);
     DebugDeallocate(ptr, MallocBlock::kMallocType, 0);
-    return NULL;
+    return nullptr;
   }
+
+  if (PREDICT_FALSE(tcmalloc::IsEmergencyPtr(ptr))) {
+    return tcmalloc::EmergencyRealloc(ptr, size);
+  }
+
   MallocBlock* old = MallocBlock::FromRawPointer(ptr);
   old->Check(MallocBlock::kMallocType);
   MallocBlock* p = MallocBlock::Allocate(size, MallocBlock::kMallocType);
 
   // If realloc fails we are to leave the old block untouched and
   // return null
-  if (p == NULL)  return NULL;
+  if (p == nullptr)  return nullptr;
 
   size_t old_size = old->actual_data_size(ptr);
 

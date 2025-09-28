@@ -1556,6 +1556,7 @@ TEST(TCMallocTest, AllTests) {
 TEST(TCMallocTest, EmergencyMalloc) {
   auto portal = TestingPortal::Get();
   if (!portal->HasEmergencyMalloc()) {
+    printf("EmergencyMalloc test skipped\n");
     return;
   }
 
@@ -1566,7 +1567,7 @@ TEST(TCMallocTest, EmergencyMalloc) {
     ResetDeleteHook();
   });
 
-  void* p1 = noopt(malloc)(32);
+  void* p1 = noopt(tc_malloc)(32);
   void* p2 = nullptr;
 
   VerifyNewHookWasCalled();
@@ -1582,14 +1583,63 @@ TEST(TCMallocTest, EmergencyMalloc) {
 
   // Emergency malloc doesn't return pointers recognized by MallocExtension
   ASSERT_EQ(MallocExtension::instance()->GetOwnership(p1), MallocExtension::kOwned);
-  ASSERT_NE(MallocExtension::instance()->GetOwnership(p2), MallocExtension::kOwned);
+  ASSERT_EQ(MallocExtension::instance()->GetOwnership(p2), MallocExtension::kNotOwned);
 
   // Emergency malloc automagically does the right thing for free()
   // calls and doesn't invoke hooks.
-  free(p2);
+  tc_free(p2);
   ASSERT_EQ(g_DeleteHook_calls, 0);
 
-  free(p1);
+  tc_free(p1);
+  VerifyDeleteHookWasCalled();
+}
+
+TEST(TCMallocTest, EmergencyMallocNoHook) {
+  auto portal = TestingPortal::Get();
+  if (!portal->HasEmergencyMalloc()) {
+    printf("EmergencyMallocNoHook test skipped\n");
+    return;
+  }
+
+  void* p1 = noopt(tc_malloc)(32);
+  void* p2 = nullptr;
+  void* p3 = nullptr;
+  void* p4 = nullptr;
+
+  portal->WithEmergencyMallocEnabled([&] () {
+    p2 = noopt(malloc)(32);
+    for (int i = 11; i < 999; i++) {
+      tc_free(p3);
+      p3 = tc_calloc(1, i);
+    }
+    p4 = tc_calloc(4096, 1024);
+  });
+
+  ASSERT_NE(p2, nullptr);
+  ASSERT_NE(p3, nullptr);
+  ASSERT_NE(p4, nullptr);
+
+  // Emergency malloc doesn't return pointers recognized by MallocExtension
+  ASSERT_EQ(MallocExtension::instance()->GetOwnership(p1), MallocExtension::kOwned);
+  ASSERT_EQ(MallocExtension::instance()->GetOwnership(p2), MallocExtension::kNotOwned);
+  ASSERT_EQ(MallocExtension::instance()->GetOwnership(p3), MallocExtension::kNotOwned);
+  ASSERT_EQ(MallocExtension::instance()->GetOwnership(p4), MallocExtension::kNotOwned);
+
+  SetNewHook();
+  SetDeleteHook();
+  tcmalloc::Cleanup unhook([] () {
+    ResetNewHook();
+    ResetDeleteHook();
+  });
+
+  // Emergency malloc automagically does the right thing for free()
+  // calls and doesn't invoke hooks.
+  tc_free(p4);
+  tc_free(p3);
+  tc_free(p2);
+  ASSERT_EQ(g_DeleteHook_calls, 0);
+
+  tc_free(p1);
   VerifyDeleteHookWasCalled();
 }
 

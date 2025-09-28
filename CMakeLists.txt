@@ -5,14 +5,14 @@ cmake_minimum_required(VERSION 3.12)
 
 # Based on configure.ac
 
-project(gperftools VERSION 2.15 LANGUAGES C CXX
+project(gperftools VERSION 2.15.90 LANGUAGES C CXX
         DESCRIPTION "Performance tools for C++"
         HOMEPAGE_URL https://github.com/gperftools/gperftools)
 
 # Update this value for every release!
-set(TCMALLOC_SO_VERSION 9.16.5)
-set(PROFILER_SO_VERSION 5.11.5)
-set(TCMALLOC_AND_PROFILER_SO_VERSION 10.11.6)
+set(TCMALLOC_SO_VERSION 9.17.5)
+set(PROFILER_SO_VERSION 5.12.5)
+set(TCMALLOC_AND_PROFILER_SO_VERSION 10.12.6)
 
 # The user can choose not to compile in the heap-profiler, the
 # heap-checker, or the cpu-profiler.  There's also the possibility
@@ -187,7 +187,6 @@ set(CMAKE_EXTRA_INCLUDE_FILES "malloc.h")
 check_type_size("struct mallinfo" STRUCT_MALLINFO LANGUAGE CXX)
 check_type_size("struct mallinfo2" STRUCT_MALLINFO2 LANGUAGE CXX)
 check_function_exists("sbrk" HAVE_SBRK) # for tcmalloc to get memory
-check_function_exists("__sbrk" HAVE___SBRK) # for tcmalloc to get memory
 check_function_exists("geteuid" HAVE_GETEUID) # for turning off services when run as root
 check_include_file("features.h" HAVE_FEATURES_H) # for vdso_support.h, Where __GLIBC__ is defined
 check_include_file("malloc.h" HAVE_MALLOC_H) # some systems define stuff there, others not
@@ -614,12 +613,15 @@ if(BUILD_TESTING)
   target_link_libraries(malloc_hook_test common gtest)
   add_test(malloc_hook_test malloc_hook_test)
 
-  if(NOT MINGW AND NOT MSVC)
-    add_executable(mmap_hook_test
-            src/tests/mmap_hook_test.cc
-            src/mmap_hook.cc)
-    target_link_libraries(mmap_hook_test common gtest)
-    add_test(mmap_hook_test mmap_hook_test)
+  if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
+    if(NOT MINGW AND NOT MSVC)
+      add_executable(mmap_hook_test
+              src/tests/mmap_hook_test.cc
+              src/mmap_hook.cc
+              src/malloc_backtrace.cc)
+      target_link_libraries(mmap_hook_test stacktrace common gtest)
+      add_test(mmap_hook_test mmap_hook_test)
+    endif()
   endif()
 
   add_executable(malloc_extension_test src/tests/malloc_extension_test.cc)
@@ -660,6 +662,10 @@ if(BUILD_TESTING)
   target_link_libraries(function_ref_test gtest)
   add_test(function_ref_test function_ref_test)
 
+  add_executable(trivialre_test benchmark/trivialre_test.cc)
+  target_link_libraries(trivialre_test gtest)
+  add_test(trivialre_test trivialre_test)
+
   add_executable(generic_writer_test src/tests/generic_writer_test.cc)
   target_link_libraries(generic_writer_test common gtest)
   add_test(generic_writer_test generic_writer_test)
@@ -685,6 +691,10 @@ if(BUILD_TESTING)
           src/tests/testutil.cc)
   target_link_libraries(thread_dealloc_unittest tcmalloc_minimal)
   add_test(thread_dealloc_unittest thread_dealloc_unittest)
+
+  add_executable(min_per_thread_cache_size_test src/tests/min_per_thread_cache_size_test.cc)
+  target_link_libraries(min_per_thread_cache_size_test tcmalloc_minimal gtest)
+  add_test(min_per_thread_cache_size_test min_per_thread_cache_size_test)
 endif()
 
 ### ------- tcmalloc_minimal_debug (thread-caching malloc with debugallocation)
@@ -757,8 +767,7 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
 
   if(GPERFTOOLS_BUILD_HEAP_CHECKER)
     set(HEAP_CHECKER_SRC src/base/linuxthreads.cc
-                         src/heap-checker.cc
-                         src/heap-checker-bcad.cc)
+                         src/heap-checker.cc)
     set(HEAP_CHECKER_DEFINE )
   else()
     set(HEAP_CHECKER_SRC )
@@ -772,6 +781,7 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
     src/heap-profile-table.cc
     src/heap-profiler.cc
     ${EMERGENCY_MALLOC_CC}
+    src/malloc_backtrace.cc
     src/mmap_hook.cc
     src/memory_region_map.cc)
   add_library(tcmalloc ${TCMALLOC_CC} ${FULL_MALLOC_SRC})

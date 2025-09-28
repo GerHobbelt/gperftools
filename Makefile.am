@@ -163,6 +163,7 @@ libgtest_la_SOURCES = vendor/googletest/googletest/src/gtest_main.cc \
 
 libgtest_la_CPPFLAGS = -I$(top_srcdir)/vendor/googletest/googletest/include \
  -I$(top_srcdir)/vendor/googletest/googletest/ $(AM_CPPFLAGS)
+libgtest_la_LIBADD = $(REGEX_LIBS)
 
 gtest_CPPFLAGS = -I$(top_srcdir)/vendor/googletest/googletest/include $(AM_CPPFLAGS)
 
@@ -323,6 +324,11 @@ function_ref_test_SOURCES = src/tests/function_ref_test.cc
 function_ref_test_CPPFLAGS = $(gtest_CPPFLAGS)
 function_ref_test_LDADD = libgtest.la
 
+TESTS += trivialre_test
+trivialre_test_SOURCES = benchmark/trivialre_test.cc
+trivialre_test_CPPFLAGS = $(gtest_CPPFLAGS)
+trivialre_test_LDADD = libgtest.la
+
 TESTS += pagemap_unittest
 pagemap_unittest_SOURCES = src/tests/pagemap_unittest.cc \
                            src/internal_logging.cc
@@ -361,9 +367,10 @@ if WITH_HEAP_PROFILER_OR_CHECKER
 if !MINGW
 TESTS += mmap_hook_test
 mmap_hook_test_SOURCES = src/tests/mmap_hook_test.cc \
-                         src/mmap_hook.cc
+                         src/mmap_hook.cc \
+                         src/malloc_backtrace.cc
 mmap_hook_test_CPPFLAGS = $(gtest_CPPFLAGS)
-mmap_hook_test_LDADD = libcommon.la libgtest.la
+mmap_hook_test_LDADD = libstacktrace.la libcommon.la libgtest.la
 endif !MINGW
 endif WITH_HEAP_PROFILER_OR_CHECKER
 
@@ -466,6 +473,12 @@ thread_dealloc_unittest_SOURCES = src/tests/thread_dealloc_unittest.cc \
 thread_dealloc_unittest_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
 thread_dealloc_unittest_LDADD = libtcmalloc_minimal.la
 
+TESTS += min_per_thread_cache_size_test
+min_per_thread_cache_size_test_SOURCES = src/tests/min_per_thread_cache_size_test.cc
+min_per_thread_cache_size_test_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
+min_per_thread_cache_size_test_CPPFLAGS = $(gtest_CPPFLAGS)
+min_per_thread_cache_size_test_LDADD = libtcmalloc_minimal.la libgtest.la
+
 ### Documentation
 dist_doc_DATA += docs/tcmalloc.html \
                  docs/overview.gif \
@@ -564,7 +577,7 @@ endif WITH_DEBUGALLOC
 if !MINGW
 noinst_LTLIBRARIES += librun_benchmark.la
 librun_benchmark_la_SOURCES = \
-	benchmark/run_benchmark.cc benchmark/run_benchmark.h
+	benchmark/run_benchmark.cc
 
 noinst_PROGRAMS += malloc_bench malloc_bench_shared \
 	binary_trees binary_trees_shared
@@ -624,13 +637,8 @@ endif !BUILD_EMERGENCY_MALLOC
 ### Making the library
 
 if WITH_HEAP_CHECKER
-# heap-checker-bcad is last, in hopes its global ctor will run first.
-# (Note this is added to libtcmalloc.la, not libtcmalloc_internal.la,
-# but that's ok; the internal/external distinction is only useful for
-# cygwin, and cygwin doesn't use HEAP_CHECKER anyway.)
 HEAP_CHECKER_SOURCES = src/base/linuxthreads.cc \
-                       src/heap-checker.cc \
-                       src/heap-checker-bcad.cc
+                       src/heap-checker.cc
 MAYBE_NO_HEAP_CHECK =
 else !WITH_HEAP_CHECKER
 HEAP_CHECKER_SOURCES =
@@ -643,6 +651,7 @@ FULL_MALLOC_SRC = $(HEAP_CHECKER_SOURCES) \
                   src/heap-profile-table.cc \
                   src/heap-profiler.cc \
                   $(EMERGENCY_MALLOC_CC) \
+                  src/malloc_backtrace.cc \
                   src/mmap_hook.cc \
                   src/memory_region_map.cc
 lib_LTLIBRARIES += libtcmalloc.la
@@ -713,7 +722,7 @@ TESTS += sampling_test
 sampling_test_SOURCES = src/tests/sampling_test.cc
 sampling_test_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
 sampling_test_CPPFLAGS = $(AM_CPPFLAGS) "-DPPROF_PATH=$(top_srcdir)/src/pprof"
-sampling_test_LDADD = libtcmalloc.la
+sampling_test_LDADD = libtcmalloc.la $(REGEX_LIBS)
 
 endif WITH_HEAP_PROFILER_OR_CHECKER
 
@@ -787,7 +796,7 @@ sampling_debug_test_SOURCES = $(sampling_test_SOURCES)
 sampling_debug_test_CXXFLAGS = $(sampling_test_CXXFLAGS)
 sampling_debug_test_CPPFLAGS = $(sampling_test_CPPFLAGS)
 sampling_debug_test_LDFLAGS = $(sampling_test_LDFLAGS)
-sampling_debug_test_LDADD = libtcmalloc_debug.la
+sampling_debug_test_LDADD = libtcmalloc_debug.la $(REGEX_LIBS)
 
 endif WITH_HEAP_PROFILER_OR_CHECKER
 
@@ -987,9 +996,11 @@ $(top_distdir)/ChangeLog:
 
 EXTRA_DIST = $(SCRIPTS) \
              src/windows/get_mangled_names.cc src/windows/override_functions.cc \
+             src/windows/CMakeLists.txt \
              docs/pprof.see_also $(WINDOWS_EXTRA) \
              gperftools.sln vsprojects vendor \
              $(top_srcdir)/src/*h $(top_srcdir)/src/base/*h \
+             $(top_srcdir)/benchmark/*h \
              $(top_srcdir)/src/tests/*h \
              $(top_srcdir)/src/windows/*h $(top_srcdir)/src/gperftools/*h \
              CMakeLists.txt cmake

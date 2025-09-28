@@ -308,7 +308,7 @@ class MemoryRegionMap {
   // Recursion count for the recursive lock.
   static int recursion_count_;
   // The thread id of the thread that's inside the recursive lock.
-  static std::thread::id lock_owner_tid_;
+  static uintptr_t lock_owner_tid_;
 
   // Total size of all mapped pages so far
   static int64_t map_size_;
@@ -368,10 +368,12 @@ class MemoryRegionMap {
 
   // Record addition of a memory region at address "start" of size "size"
   // (called from our mmap/mremap/sbrk hook).
-  static void RecordRegionAddition(const void* start, size_t size);
+  static void RecordRegionAddition(const void* start, size_t size, int stack_depth, void** stack);
   // Record deletion of a memory region at address "start" of size "size"
   // (called from our munmap/mremap/sbrk hook).
   static void RecordRegionRemoval(const void* start, size_t size);
+
+  static int NeedBacktrace(const tcmalloc::MappingEvent& evt);
 
   // Record deletion of a memory region of size "size" in a bucket whose
   // caller stack trace is "key".  The stack trace is used to a depth of

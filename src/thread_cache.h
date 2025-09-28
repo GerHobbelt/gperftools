@@ -35,6 +35,7 @@
 #define TCMALLOC_THREAD_CACHE_H_
 
 #include <config.h>
+#include <atomic>
 #include <stddef.h>                     // for size_t, NULL
 #include <stdint.h>                     // for uint32_t, uint64_t
 #include <sys/types.h>                  // for ssize_t
@@ -67,11 +68,6 @@ class ThreadCache {
   static ThreadCache* NewHeap();
   // REQUIRES: Static::pageheap_lock is not held.
   static void DeleteCache(ThreadCache* heap);
-
-  // REQUIRES: Static::pageheap_lock is held
-  ThreadCache();
-  // REQUIRES: Static::pageheap_lock is not held
-  ~ThreadCache();
 
   // Accessors (mostly just for printing stats)
   int freelist_length(uint32_t cl) const { return list_[cl].length(); }
@@ -112,6 +108,15 @@ class ThreadCache {
   static void set_overall_thread_cache_size(size_t new_size);
   static size_t overall_thread_cache_size() {
     return overall_thread_cache_size_;
+  }
+
+  // Sets the lower bound on per-thread cache size to new_size.
+  static void set_min_per_thread_cache_size(size_t new_size) {
+    min_per_thread_cache_size_.store(new_size, std::memory_order_relaxed);
+  }
+
+  static size_t min_per_thread_cache_size() {
+    return min_per_thread_cache_size_.load(std::memory_order_relaxed);
   }
 
   static int thread_heap_count() {
@@ -230,6 +235,11 @@ class ThreadCache {
     }
   };
 
+  // REQUIRES: Static::pageheap_lock is held
+  ThreadCache();
+  // REQUIRES: Static::pageheap_lock is not held
+  ~ThreadCache();
+
   // Gets and returns an object from the central cache, and, if possible,
   // also adds some objects of that size class to this thread cache.
   void* FetchFromCentralCache(uint32_t cl, int32_t byte_size,
@@ -263,6 +273,9 @@ class ThreadCache {
   // thread_heaps_.  Protected by Static::pageheap_lock.
   static ThreadCache* next_memory_steal_;
 
+  // Lower bound on per thread cache size. Default value is 512 KBs. 
+  static std::atomic<size_t> min_per_thread_cache_size_;
+
   // Overall thread cache size.  Protected by Static::pageheap_lock.
   static size_t overall_thread_cache_size_;
 
@@ -288,7 +301,6 @@ class ThreadCache {
   Sampler       sampler_;               // A sampler
 
   static void RecomputePerThreadCacheSize();
-public:
 
   // All ThreadCache objects are kept in a linked list (for stats collection)
   ThreadCache* next_;
