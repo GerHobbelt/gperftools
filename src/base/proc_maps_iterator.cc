@@ -258,8 +258,10 @@ bool ForEachLine(const char* path, const Body& body) {
     return false;
   }
 
-  char* sbuf = nullptr;
-  char* ebuf = nullptr;
+  char* sbuf = buf; // note, initial value could be nullptr, but
+                    // memmove actually insists to get non-null
+                    // arguments (even when count is 0)
+  char* ebuf = sbuf;
 
   bool eof = false;
 
@@ -663,7 +665,7 @@ void SaveProcSelfMaps(GenericWriter* writer) {
 }
 
 void SaveProcSelfMapsToRawFD(RawFD fd) {
-  FileGenericWriter<> writer(fd);
+  RawFDGenericWriter<> writer(fd);
   SaveProcSelfMaps(&writer);
 }
 

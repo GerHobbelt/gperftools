@@ -62,20 +62,20 @@
 
 #include <gperftools/malloc_extension.h>
 #include <gperftools/malloc_hook.h>
-#include <gperftools/stacktrace.h>
 
 // Will be pulled in as along with tcmalloc.cc
 // #include <gperftools/tcmalloc.h>
 
 #include "addressmap-inl.h"
 #include "base/commandlineflags.h"
-#include "base/threading.h"
 #include "base/googleinit.h"
 #include "base/logging.h"
 #include "base/spinlock.h"
+#include "base/threading.h"
 #include "malloc_hook-inl.h"
-#include "symbolize.h"
+#include "maybe_emergency_malloc.h"
 #include "safe_strerror.h"
+#include "symbolize.h"
 
 // NOTE: due to #define below, tcmalloc.cc will omit tc_XXX
 // definitions. So that debug implementations can be defined
@@ -785,7 +785,13 @@ class MallocBlock {
 
   static bool CheckEverything() {
     alloc_map_lock_.Lock();
-    if (alloc_map_ != NULL)  alloc_map_->Iterate(CheckCallback, 0);
+    if (alloc_map_) {
+      alloc_map_->Iterate([] (const void* ptr, int* type) {
+        if ((*type & kDeallocatedTypeBit) == 0) {
+          FromRawPointer(ptr)->CheckLocked(*type);
+        }
+      });
+    }
     alloc_map_lock_.Unlock();
     return true;  // if we get here, we're okay
   }
@@ -797,7 +803,28 @@ class MallocBlock {
     stats_blocks_ = 0;
     stats_total_ = 0;
     stats_histogram_ = histogram;
-    if (alloc_map_ != NULL) alloc_map_->Iterate(StatsCallback, 0);
+
+    if (alloc_map_) {
+      alloc_map_->Iterate([] (const void* ptr, int* type) {
+        if ((*type & kDeallocatedTypeBit) == 0) {
+          const MallocBlock* b = FromRawPointer(ptr);
+          b->CheckLocked(*type);
+          ++stats_blocks_;
+          size_t mysize = b->size1_;
+          int entry = 0;
+          stats_total_ += mysize;
+          while (mysize) {
+            ++entry;
+            mysize >>= 1;
+          }
+          RAW_CHECK(entry < kMallocHistogramSize,
+                    "kMallocHistogramSize should be at least as large as log2 "
+                    "of the maximum process memory size");
+          stats_histogram_[entry] += 1;
+        }
+      });
+    }
+
     *blocks = stats_blocks_;
     *total = stats_total_;
     alloc_map_lock_.Unlock();
@@ -806,35 +833,10 @@ class MallocBlock {
 
  private:  // helpers for CheckEverything and MemoryStats
 
-  static void CheckCallback(const void* ptr, int* type, int dummy) {
-    if ((*type & kDeallocatedTypeBit) == 0) {
-      FromRawPointer(ptr)->CheckLocked(*type);
-    }
-  }
-
   // Accumulation variables for StatsCallback protected by alloc_map_lock_
   static int stats_blocks_;
   static size_t stats_total_;
   static int* stats_histogram_;
-
-  static void StatsCallback(const void* ptr, int* type, int dummy) {
-    if ((*type & kDeallocatedTypeBit) == 0) {
-      const MallocBlock* b = FromRawPointer(ptr);
-      b->CheckLocked(*type);
-      ++stats_blocks_;
-      size_t mysize = b->size1_;
-      int entry = 0;
-      stats_total_ += mysize;
-      while (mysize) {
-        ++entry;
-        mysize >>= 1;
-      }
-      RAW_CHECK(entry < kMallocHistogramSize,
-                "kMallocHistogramSize should be at least as large as log2 "
-                "of the maximum process memory size");
-      stats_histogram_[entry] += 1;
-    }
-  }
 };
 
 void DanglingWriteChecker() {
@@ -991,7 +993,7 @@ static int TraceFd() {
 // Print the hex stack dump on a single line.   PCs are separated by tabs.
 static void TraceStack(void) {
   void *pcs[16];
-  int n = GetStackTrace(pcs, sizeof(pcs)/sizeof(pcs[0]), 0);
+  int n = tcmalloc::GrabBacktrace(pcs, sizeof(pcs)/sizeof(pcs[0]), 0);
   for (int i = 0; i != n; i++) {
     TracePrintf(TraceFd(), "\t%p", pcs[i]);
   }
@@ -1154,26 +1156,14 @@ class DebugMallocImplementation : public TCMallocImplementation {
     v->push_back(i);
   }
 
- };
+};
 
-static union {
-  char chars[sizeof(DebugMallocImplementation)];
-  void *ptr;
-} debug_malloc_implementation_space;
-
-REGISTER_MODULE_INITIALIZER(debugallocation, {
-#if (__cplusplus >= 201103L)
-    static_assert(alignof(decltype(debug_malloc_implementation_space)) >= alignof(DebugMallocImplementation),
-                  "DebugMallocImplementation is expected to need just word alignment");
-#endif
-  // Either we or valgrind will control memory management.  We
-  // register our extension if we're the winner. Otherwise let
-  // Valgrind use its own malloc (so don't register our extension).
-  if (!RunningOnValgrind()) {
-    DebugMallocImplementation *impl = new (debug_malloc_implementation_space.chars) DebugMallocImplementation();
-    MallocExtension::Register(impl);
-  }
-});
+void SetupMallocExtension() {
+  static struct {
+    alignas(DebugMallocImplementation) char memory[sizeof(DebugMallocImplementation)];
+  } storage;
+  MallocExtension::Register(new (storage.memory) DebugMallocImplementation);
+}
 
 REGISTER_MODULE_DESTRUCTOR(debugallocation, {
   if (!RunningOnValgrind()) {

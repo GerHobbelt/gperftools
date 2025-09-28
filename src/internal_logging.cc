@@ -45,21 +45,11 @@
 #include "base/logging.h"
 #include "base/spinlock.h"              // for SpinLockHolder, SpinLock
 
-// Variables for storing crash output.  Allocated statically since we
-// may not be able to heap-allocate while crashing.
-static SpinLock crash_lock;
-static bool crashed = false;
-static const int kStatsBufferSize = 16 << 10;
-static char stats_buffer[kStatsBufferSize] = { 0 };
-
 namespace tcmalloc {
 
 static void WriteMessage(const char* msg, int length) {
   WRITE_TO_STDERR(msg, length);
 }
-
-void (*log_message_writer)(const char* msg, int length) = WriteMessage;
-
 
 class Logger {
  public:
@@ -96,24 +86,11 @@ void Log(LogMode mode, const char* filename, int line,
 
   int msglen = state.p_ - state.buf_;
   if (mode == kLog) {
-    (*log_message_writer)(state.buf_, msglen);
+    WriteMessage(state.buf_, msglen);
     return;
   }
 
-  bool first_crash = false;
-  {
-    SpinLockHolder l(&crash_lock);
-    if (!crashed) {
-      crashed = true;
-      first_crash = true;
-    }
-  }
-
-  (*log_message_writer)(state.buf_, msglen);
-  if (first_crash && mode == kCrashWithStats) {
-    MallocExtension::instance()->GetStats(stats_buffer, kStatsBufferSize);
-    (*log_message_writer)(stats_buffer, strlen(stats_buffer));
-  }
+  WriteMessage(state.buf_, msglen);
 
   abort();
 }

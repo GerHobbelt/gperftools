@@ -85,6 +85,8 @@
 #include <string>
 #include <vector>
 
+#include "base/function_ref.h"
+#include "base/cleanup.h"
 #include "base/logging.h"
 #include "gperftools/malloc_hook.h"
 #include "gperftools/malloc_extension.h"
@@ -93,6 +95,8 @@
 #include "thread_cache.h"
 #include "system-alloc.h"
 #include "tests/testutil.h"
+
+#include "tests/legacy_assertions.h"
 
 // Windows doesn't define pvalloc and a few other obsolete unix
 // functions; nor does it define posix_memalign (which is not obsolete).
@@ -141,15 +145,15 @@ static inline int PosixMemalign(void** ptr, size_t align, size_t size) {
 
 #endif
 
-#define OVERALIGNMENT 64
+static constexpr size_t kOveralignment = 64;
 
 struct overaligned_type
 {
-  alignas(OVERALIGNMENT)
-  unsigned char data[OVERALIGNMENT * 2]; // make the object size different from
-                                         // alignment to make sure the correct
-                                         // values are passed to the new/delete
-                                         // implementation functions
+  alignas(kOveralignment)
+  unsigned char data[kOveralignment * 2]; // make the object size different from
+                                          // alignment to make sure the correct
+                                          // values are passed to the new/delete
+                                          // implementation functions
 };
 
 // On systems (like freebsd) that don't define MAP_ANONYMOUS, use the old
@@ -602,7 +606,7 @@ static void TestHugeAllocations(AllocatorState* rnd) {
 }
 
 static void TestCalloc(size_t n, size_t s, bool ok) {
-  char* p = reinterpret_cast<char*>(calloc(n, s));
+  char* p = reinterpret_cast<char*>(noopt(calloc)(n, s));
   if (FLAGS_verbose)
     fprintf(LOGSTREAM, "calloc(%zx, %zx): %p\n", n, s, p);
   if (!ok) {
@@ -819,47 +823,35 @@ static void TestHugeThreadCache() {
   delete[] array;
 }
 
-namespace {
+// Check that at least one of the callbacks from Ranges() contains
+// the specified address with the specified type, and has size
+// >= min_size.
+static void CheckRangeCallback(void* ptr, base::MallocRange::Type type,
+                               size_t min_size) {
+  bool matched = false;
+  const uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+  auto callback = [&] (const base::MallocRange* r) -> void {
+    if (!(r->address <= addr && addr < r->address + r->length)) {
+      return;
+    }
 
-struct RangeCallbackState {
-  uintptr_t ptr;
-  base::MallocRange::Type expected_type;
-  size_t min_size;
-  bool matched;
-};
-
-static void RangeCallback(void* arg, const base::MallocRange* r) {
-  RangeCallbackState* state = reinterpret_cast<RangeCallbackState*>(arg);
-  if (state->ptr >= r->address &&
-      state->ptr < r->address + r->length) {
-    if (state->expected_type == base::MallocRange::FREE) {
+    if (type == base::MallocRange::FREE) {
       // We are expecting r->type == FREE, but ReleaseMemory
       // may have already moved us to UNMAPPED state instead (this happens in
       // approximately 0.1% of executions). Accept either state.
       CHECK(r->type == base::MallocRange::FREE ||
             r->type == base::MallocRange::UNMAPPED);
     } else {
-      CHECK_EQ(r->type, state->expected_type);
+      CHECK_EQ(r->type, type);
     }
-    CHECK_GE(r->length, state->min_size);
-    state->matched = true;
-  }
-}
+    CHECK_GE(r->length, min_size);
 
-// Check that at least one of the callbacks from Ranges() contains
-// the specified address with the specified type, and has size
-// >= min_size.
-static void CheckRangeCallback(void* ptr, base::MallocRange::Type type,
-                               size_t min_size) {
-  RangeCallbackState state;
-  state.ptr = reinterpret_cast<uintptr_t>(ptr);
-  state.expected_type = type;
-  state.min_size = min_size;
-  state.matched = false;
-  MallocExtension::instance()->Ranges(&state, RangeCallback);
-  CHECK(state.matched);
-}
+    matched = true;
+  };
 
+  tcmalloc::FunctionRefFirstDataArg<void(const base::MallocRange*)> ref(callback);
+  MallocExtension::instance()->Ranges(ref.data, ref.fn);
+  CHECK(matched);
 }
 
 static bool HaveSystemRelease() {
@@ -1169,6 +1161,9 @@ static ATTRIBUTE_NOINLINE void TestNewOOMHandling() {
 
   std::new_handler old = std::set_new_handler(test_new_handler);
   get_test_sys_alloc()->simulate_oom = true;
+  tcmalloc::Cleanup restore_oom([] () {
+    get_test_sys_alloc()->simulate_oom = false;
+  });
 
   ASSERT_EQ(saw_new_handler_runs, 0);
 
@@ -1182,7 +1177,6 @@ static ATTRIBUTE_NOINLINE void TestNewOOMHandling() {
 
   ASSERT_GE(saw_new_handler_runs, 1);
 
-  get_test_sys_alloc()->simulate_oom = false;
   std::set_new_handler(old);
 }
 #endif  // !DEBUGALLOCATION
@@ -1364,59 +1358,59 @@ static int RunAllTests(int argc, char** argv) {
 
     overaligned_type* poveraligned = noopt(new overaligned_type);
     CHECK(poveraligned != NULL);
-    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    CHECK((((size_t)poveraligned) % kOveralignment) == 0u);
     VerifyNewHookWasCalled();
     delete poveraligned;
     VerifyDeleteHookWasCalled();
 
     poveraligned = noopt(new overaligned_type[10]);
     CHECK(poveraligned != NULL);
-    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    CHECK((((size_t)poveraligned) % kOveralignment) == 0u);
     VerifyNewHookWasCalled();
     delete[] poveraligned;
     VerifyDeleteHookWasCalled();
 
     poveraligned = noopt(new(std::nothrow) overaligned_type);
     CHECK(poveraligned != NULL);
-    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    CHECK((((size_t)poveraligned) % kOveralignment) == 0u);
     VerifyNewHookWasCalled();
     delete poveraligned;
     VerifyDeleteHookWasCalled();
 
     poveraligned = noopt(new(std::nothrow) overaligned_type[10]);
     CHECK(poveraligned != NULL);
-    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    CHECK((((size_t)poveraligned) % kOveralignment) == 0u);
     VerifyNewHookWasCalled();
     delete[] poveraligned;
     VerifyDeleteHookWasCalled();
 
     // Another way of calling operator new
-    p2 = noopt(static_cast<char*>(::operator new(100, std::align_val_t(OVERALIGNMENT))));
+    p2 = noopt(static_cast<char*>(::operator new(100, std::align_val_t(kOveralignment))));
     CHECK(p2 != NULL);
-    CHECK((((size_t)p2) % OVERALIGNMENT) == 0u);
+    CHECK((((size_t)p2) % kOveralignment) == 0u);
     VerifyNewHookWasCalled();
-    ::operator delete(p2, std::align_val_t(OVERALIGNMENT));
+    ::operator delete(p2, std::align_val_t(kOveralignment));
     VerifyDeleteHookWasCalled();
 
-    p2 = noopt(static_cast<char*>(::operator new(100, std::align_val_t(OVERALIGNMENT), std::nothrow)));
+    p2 = noopt(static_cast<char*>(::operator new(100, std::align_val_t(kOveralignment), std::nothrow)));
     CHECK(p2 != NULL);
-    CHECK((((size_t)p2) % OVERALIGNMENT) == 0u);
+    CHECK((((size_t)p2) % kOveralignment) == 0u);
     VerifyNewHookWasCalled();
-    ::operator delete(p2, std::align_val_t(OVERALIGNMENT), std::nothrow);
+    ::operator delete(p2, std::align_val_t(kOveralignment), std::nothrow);
     VerifyDeleteHookWasCalled();
 
     poveraligned = noopt(new overaligned_type);
     CHECK(poveraligned != NULL);
-    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    CHECK((((size_t)poveraligned) % kOveralignment) == 0u);
     VerifyNewHookWasCalled();
-    ::operator delete(poveraligned, sizeof(overaligned_type), std::align_val_t(OVERALIGNMENT));
+    ::operator delete(poveraligned, sizeof(overaligned_type), std::align_val_t(kOveralignment));
     VerifyDeleteHookWasCalled();
 
     poveraligned = noopt(new overaligned_type[10]);
     CHECK(poveraligned != NULL);
-    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    CHECK((((size_t)poveraligned) % kOveralignment) == 0u);
     VerifyNewHookWasCalled();
-    ::operator delete[](poveraligned, sizeof(overaligned_type) * 10, std::align_val_t(OVERALIGNMENT));
+    ::operator delete[](poveraligned, sizeof(overaligned_type) * 10, std::align_val_t(kOveralignment));
     VerifyDeleteHookWasCalled();
 
 // On AIX user defined malloc replacement of libc routines

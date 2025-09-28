@@ -146,7 +146,6 @@ using std::vector;
 
 using tcmalloc::kLog;
 using tcmalloc::kCrash;
-using tcmalloc::kCrashWithStats;
 using tcmalloc::Log;
 using tcmalloc::PageHeap;
 using tcmalloc::PageHeapAllocator;
@@ -516,53 +515,6 @@ static void PrintStats(int level) {
   delete[] buffer;
 }
 
-static void** DumpHeapGrowthStackTraces() {
-  // Count how much space we need
-  int needed_slots = 0;
-  {
-    SpinLockHolder h(Static::pageheap_lock());
-    for (StackTrace* t = Static::growth_stacks();
-         t != NULL;
-         t = reinterpret_cast<StackTrace*>(
-             t->stack[tcmalloc::kMaxStackDepth-1])) {
-      needed_slots += 3 + t->depth;
-    }
-    needed_slots += 100;            // Slop in case list grows
-    needed_slots += needed_slots/8; // An extra 12.5% slop
-  }
-
-  void** result = new void*[needed_slots];
-  if (result == NULL) {
-    Log(kLog, __FILE__, __LINE__,
-        "tcmalloc: allocation failed for stack trace slots",
-        needed_slots * sizeof(*result));
-    return NULL;
-  }
-
-  SpinLockHolder h(Static::pageheap_lock());
-  int used_slots = 0;
-  for (StackTrace* t = Static::growth_stacks();
-       t != NULL;
-       t = reinterpret_cast<StackTrace*>(
-           t->stack[tcmalloc::kMaxStackDepth-1])) {
-    ASSERT(used_slots < needed_slots);  // Need to leave room for terminator
-    if (used_slots + 3 + t->depth >= needed_slots) {
-      // No more room
-      break;
-    }
-
-    result[used_slots+0] = reinterpret_cast<void*>(static_cast<uintptr_t>(1));
-    result[used_slots+1] = reinterpret_cast<void*>(t->size);
-    result[used_slots+2] = reinterpret_cast<void*>(t->depth);
-    for (int d = 0; d < t->depth; d++) {
-      result[used_slots+3+d] = t->stack[d];
-    }
-    used_slots += 3 + t->depth;
-  }
-  result[used_slots] = reinterpret_cast<void*>(static_cast<uintptr_t>(0));
-  return result;
-}
-
 static void IterateOverRanges(void* arg, MallocExtension::RangeFunction func) {
   PageID page = 1;  // Some code may assume that page==0 is never used
   bool done = false;
@@ -649,7 +601,16 @@ class TCMallocImplementation : public MallocExtension {
   }
 
   virtual void** ReadHeapGrowthStackTraces() {
-    return DumpHeapGrowthStackTraces();
+    // Note: growth stacks are append only, and updated atomically. So
+    // we can just read them without any locks. And use arbitrarily long
+    // (since they're never cleared/deleted).
+    const StackTrace* head = Static::growth_stacks();
+    return ProduceStackTracesDump(
+      +[] (const void** current_head) {
+        const StackTrace* current = static_cast<const StackTrace*>(*current_head);
+        *current_head = current->stack[tcmalloc::kMaxStackDepth-1];
+        return current;
+      }, head).release();
   }
 
   virtual size_t GetThreadCacheSize() {
@@ -1126,23 +1087,8 @@ TCMallocGuard::TCMallocGuard() {
 
 #ifndef WIN32_OVERRIDE_ALLOCATORS
   ReplaceSystemAlloc();    // defined in libc_override_*.h
+  (void)MallocExtension::instance(); // make sure malloc extension is constructed
   tc_free(tc_malloc(1));
-  // Either we, or debugallocation.cc, or valgrind will control memory
-  // management.  We register our extension if we're the winner.
-#ifdef TCMALLOC_USING_DEBUGALLOCATION
-  // Let debugallocation register its extension.
-#else
-  if (RunningOnValgrind()) {
-    // Let Valgrind uses its own malloc (so don't register our extension).
-  } else {
-    static union {
-      char chars[sizeof(TCMallocImplementation)];
-      void *ptr;
-    } tcmallocimplementation_space;
-
-    MallocExtension::Register(new (tcmallocimplementation_space.chars) TCMallocImplementation());
-  }
-#endif  // !TCMALLOC_USING_DEBUGALLOCATION
 #endif  // !WIN32_OVERRIDE_ALLOCATORS
 
   ThreadCachePtr::InitThreadCachePtrLate();
@@ -1165,6 +1111,17 @@ TCMallocGuard::~TCMallocGuard() {
 }
 
 static TCMallocGuard module_enter_exit_hook;
+
+#ifndef TCMALLOC_USING_DEBUGALLOCATION
+
+void SetupMallocExtension() {
+  static struct {
+    alignas(TCMallocImplementation) char memory[sizeof(TCMallocImplementation)];
+  } storage;
+  MallocExtension::Register(new (storage.memory) TCMallocImplementation);
+}
+
+#endif  // TCMALLOC_USING_DEBUGALLOCATION
 
 //-------------------------------------------------------------------
 // Helpers for the exported routines below
@@ -1193,7 +1150,7 @@ static void* DoSampledAllocation(size_t size) {
 #ifndef NO_TCMALLOC_SAMPLES
   // Grab the stack trace outside the heap lock
   StackTrace tmp;
-  tmp.depth = GetStackTrace(tmp.stack, tcmalloc::kMaxStackDepth, 1);
+  tmp.depth = tcmalloc::GrabBacktrace(tmp.stack, tcmalloc::kMaxStackDepth, 1);
   tmp.size = size;
 
   // Allocate span
@@ -1295,7 +1252,7 @@ void* handle_oom(malloc_fn retry_fn,
 
 static void ReportLargeAlloc(Length num_pages, void* result) {
   StackTrace stack;
-  stack.depth = GetStackTrace(stack.stack, tcmalloc::kMaxStackDepth, 1);
+  stack.depth = tcmalloc::GrabBacktrace(stack.stack, tcmalloc::kMaxStackDepth, 1);
 
   static const int N = 1000;
   char buffer[N];
