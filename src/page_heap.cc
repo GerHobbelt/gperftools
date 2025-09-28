@@ -86,7 +86,7 @@ PageHeap::PageHeap(Length smallest_span_size)
       // Start scavenging at kMaxPages list
       release_index_(kMaxPages),
       aggressive_decommit_(false) {
-  COMPILE_ASSERT(kClassSizesMax <= (1 << PageMapCache::kValuebits), valuebits);
+  static_assert(kClassSizesMax <= (1 << PageMapCache::kValuebits));
   // smallest_span_size needs to be power of 2.
   CHECK_CONDITION((smallest_span_size_ & (smallest_span_size_-1)) == 0);
   for (int i = 0; i < kMaxPages; i++) {
@@ -157,7 +157,7 @@ void PageHeap::HandleUnlock(LockingContext* context) {
   }
 }
 
-Span* PageHeap::NewWithSizeClass(Length n, uint32 sizeclass) {
+Span* PageHeap::NewWithSizeClass(Length n, uint32_t sizeclass) {
   LockingContext context{this, &lock_};
 
   Span* span = NewLocked(n, &context);
@@ -657,7 +657,7 @@ bool PageHeap::EnsureLimit(Length n, bool withRelease) {
   return takenPages + n <= limit;
 }
 
-void PageHeap::RegisterSizeClass(Span* span, uint32 sc) {
+void PageHeap::RegisterSizeClass(Span* span, uint32_t sc) {
   // Associate span object with all interior pages as well
   ASSERT(span->location == Span::IN_USE);
   ASSERT(GetDescriptor(span->start) == span);

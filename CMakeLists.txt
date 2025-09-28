@@ -168,12 +168,7 @@ if(gperftools_tcmalloc_alignment STREQUAL "8")
   set(TCMALLOC_ALIGN_8BYTES ON)
 endif()
 
-# AX_CXX_COMPILE_STDCXX(11, ext, mandatory)
-if(cxx_std_17 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-  set(CMAKE_CXX_STANDARD 17) # std::align_val_t
-else()
-  set(CMAKE_CXX_STANDARD 11)
-endif()
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
@@ -199,7 +194,6 @@ set(CMAKE_EXTRA_INCLUDE_FILES)
 check_function_exists("sbrk" HAVE_SBRK) # for tcmalloc to get memory
 check_function_exists("__sbrk" HAVE___SBRK) # for tcmalloc to get memory
 check_function_exists("geteuid" HAVE_GETEUID) # for turning off services when run as root
-check_function_exists("fork" HAVE_FORK) # for the pthread_atfork setup
 check_include_file("features.h" HAVE_FEATURES_H) # for vdso_support.h, Where __GLIBC__ is defined
 check_include_file("malloc.h" HAVE_MALLOC_H) # some systems define stuff there, others not
 check_include_file("glob.h" HAVE_GLOB_H) # for heap-profile-table (cleaning up profiles)
@@ -274,12 +268,6 @@ if(gperftools_enable_libunwind)
   endif()
 endif()
 
-# See if the compiler supports -Wno-unused-result.
-# Newer ubuntu's turn on -D_FORTIFY_SOURCE=2, enabling
-# __attribute__((warn_unused_result)) for things like write(),
-# which we don't care about.
-check_c_compiler_flag("-Wno-unused-result" have_w_no_unused_result)
-
 check_c_compiler_flag("-fno-omit-frame-pointer -momit-leaf-frame-pointer" have_omit_leaf_fp)
 check_c_source_compiles("
   #if !(__i386__ || __x86_64__ || __riscv || __aarch64__)
@@ -313,19 +301,6 @@ if(NOT MSVC)
           have_sized_deallocation)
   set(CMAKE_REQUIRED_FLAGS)
 endif()
-
-check_cxx_source_compiles("
-  #include <new>
-  int main() { (::operator delete)((::operator new)(256, std::align_val_t(16)), std::align_val_t(16)); return 0; }"
-  HAVE_STD_ALIGN_VAL_T)
-if(HAVE_STD_ALIGN_VAL_T)
-  set(HAVE_STD_ALIGN_VAL_T 1)
-  set(ENABLE_ALIGNED_NEW_DELETE 1)
-else()
-  set(HAVE_STD_ALIGN_VAL_T 0)
-endif()
-
-check_cxx_compiler_flag("-faligned-new" have_f_aligned_new)
 
 check_c_source_compiles("
   #include <unwind.h>
@@ -365,31 +340,6 @@ check_c_source_compiles("
     return 0;
   }"
   HAVE___ENVIRON)
-
-# If we support __thread, that can speed up tcmalloc a bit.
-# Note, however, that our code tickles a bug in gcc < 4.1.2
-# involving TLS and -fPIC (which our libraries will use) on x86:
-#   http://gcc.gnu.org/ml/gcc-bugs/2006-09/msg02275.html
-#
-# And mingw also does compile __thread but resultant code actually
-# fails to work correctly at least in some not so ancient version:
-# http://mingw-users.1079350.n2.nabble.com/gcc-4-4-multi-threaded-exception-handling-amp-thread-specifier-not-working-td3440749.html
-#
-# Also it was reported that earlier gcc versions for mips compile
-# __thread but it doesn't really work
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
-   CMAKE_CXX_COMPILER_VERSION VERSION_LESS "4.1.2")
-  message(WARNING "gcc has this bug: http://gcc.gnu.org/ml/gcc-bugs/2006-09/msg02275.html")
-elseif(APPLE)
-  message(WARNING "OSX __thread support is known to call malloc which makes "
-                    "it unsafe to use from malloc replacement")
-elseif(MINGW)
-  message(WARNING "mingw doesn't really support tls")
-elseif(MSVC)
-  check_c_source_compiles("static __declspec(thread) int p = 0; int main() {}" HAVE_TLS)
-else()
-  check_c_source_compiles("static __thread int p = 0; int main() {}" HAVE_TLS)
-endif()
 
 if(NEED_NANOSLEEP)
   check_c_source_compiles(
@@ -431,18 +381,6 @@ endif()
 
 find_package(Threads REQUIRED)
 set(HAVE_PTHREAD ${CMAKE_USE_PTHREADS_INIT})
-
-if(FreeBSD)
-  set(PTHREADS_CRASHES_IF_RUN_TOO_EARLY ON)
-endif()
-
-set(libstdcxx_la_linker_flag)
-if(EXISTS /usr/sfw/lib/libstdc++.la)
-  file(READ /usr/sfw/lib/libstdc++.la _ch LIMIT 1)
-  if(string(LENGTH _ch) EQUAL 0)
-    set(libstdcxx_la_linker_flag "-L${CMAKE_CURRENT_SOURCE_DIR}/src/solaris")
-  endif()
-endif()
 
 check_variable_exists("program_invocation_name" HAVE_PROGRAM_INVOCATION_NAME)
 
@@ -499,20 +437,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wwrite-strings -Woverloaded-virtual -Wno-sign-compare")
 endif()
 
-if(have_w_no_unused_result)
-  add_compile_options(-Wno-unused-result)
-endif()
-
 if(have_sized_deallocation)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsized-deallocation")
 endif()
-
-if(have_f_aligned_new)
-  add_compile_options(-faligned-new)
-endif()
-
-# LIBSTDCXX_LA_LINKER_FLAG is used to fix a Solaris bug.
-add_link_options(${libstdcxx_la_linker_flag})
 
 option(
   gperftools_enable_frame_pointers
@@ -533,26 +460,12 @@ if(MINGW)
   list(APPEND TCMALLOC_FLAGS "-Wl,-u__tcmalloc")
 endif()
 
-set(googleinclude_HEADERS
-        src/google/heap-checker.h
-        src/google/heap-profiler.h
-        src/google/malloc_extension.h
-        src/google/malloc_extension_c.h
-        src/google/malloc_hook.h
-        src/google/malloc_hook_c.h
-        src/google/profiler.h
-        src/google/stacktrace.h
-        src/google/tcmalloc.h
-        )
-install(FILES ${googleinclude_HEADERS}
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/google
-        )
-
 # This is a 'convenience library' -- it's not actually installed or anything
 set(LOGGING_INCLUDES
         src/base/logging.h
         src/base/commandlineflags.h
         src/base/basictypes.h
+        src/base/threading.h
         src/base/dynamic_annotations.h)
 set(liblogging_la_SOURCES src/base/logging.cc
         src/base/generic_writer.cc
@@ -565,8 +478,9 @@ set(SYSINFO_INCLUDES
         src/getenv_safe.h
         src/base/logging.h
         src/base/commandlineflags.h
+        src/base/threading.h
         src/base/basictypes.h)
-set(libsysinfo_la_SOURCES src/base/sysinfo.cc
+set(libsysinfo_la_SOURCES src/base/sysinfo.cc src/base/proc_maps_iterator.cc
         ${SYSINFO_INCLUDES})
 set(libsysinfo_la_LIBADD ${NANOSLEEP_LIBS})
 add_library(sysinfo STATIC ${libsysinfo_la_SOURCES})
@@ -581,7 +495,6 @@ target_link_libraries(sysinfo ${libsysinfo_la_LIBADD})
 if(MINGW OR MSVC)
   set(WINDOWS_INCLUDES
           src/windows/port.h
-          src/windows/mingw.h
           src/windows/mini_disassembler.h
           src/windows/mini_disassembler_types.h
           src/windows/preamble_patcher.h)
@@ -617,6 +530,8 @@ if(MINGW OR MSVC)
   # (We also do this via a #pragma for msvc, but need to do it here for mingw).
   target_link_libraries(spinlock synchronization)
 
+  set(MAYBE_PORT_CC src/windows/port.cc)
+
 else()
   set(SPINLOCK_INCLUDES src/base/spinlock.h
           src/base/spinlock_internal.h)
@@ -628,12 +543,14 @@ else()
   set(LIBSPINLOCK spinlock sysinfo logging)
   set(TCMALLOC_CC "src/tcmalloc.cc")
   set(SYSTEM_ALLOC_CC "src/system-alloc.cc")
+  set(MAYBE_PORT_CC)
 
 endif()
 
 if(BUILD_TESTING)
   set(LOW_LEVEL_ALLOC_UNITTEST_INCLUDES
           src/base/low_level_alloc.h
+          src/base/threading.h
           src/base/basictypes.h
           src/gperftools/malloc_hook.h
           src/gperftools/malloc_hook_c.h
@@ -735,6 +652,7 @@ set(S_TCMALLOC_MINIMAL_INCLUDES src/common.h
         ${SPINLOCK_INCLUDES}
         src/tcmalloc_guard.h
         src/base/commandlineflags.h
+        src/base/threading.h
         src/base/basictypes.h
         src/safe_strerror.h
         src/pagemap.h
@@ -752,6 +670,7 @@ set(S_TCMALLOC_MINIMAL_INCLUDES src/common.h
         src/static_vars.h
         src/symbolize.h
         src/thread_cache.h
+        src/thread_cache_ptr.h
         src/stack_trace_table.h
         src/base/thread_annotations.h
         src/malloc_hook-inl.h)
@@ -778,6 +697,7 @@ set(libtcmalloc_minimal_internal_la_SOURCES src/common.cc
         src/static_vars.cc
         src/symbolize.cc
         src/thread_cache.cc
+        src/thread_cache_ptr.cc
         src/malloc_hook.cc
         src/malloc_extension.cc
         ${TCMALLOC_MINIMAL_INCLUDES})
@@ -794,7 +714,7 @@ add_library(tcmalloc_minimal SHARED ${libtcmalloc_minimal_la_SOURCES})
 target_compile_definitions(tcmalloc_minimal PRIVATE ${libtcmalloc_minimal_la_DEFINES})
 set(libtcmalloc_minimal_la_LIBADD tcmalloc_minimal_internal)
 target_link_libraries(tcmalloc_minimal PRIVATE tcmalloc_minimal_internal Threads::Threads)
-if(MINGW)
+if(MINGW AND WITH_STACK_TRACE)
   target_link_libraries(tcmalloc_minimal PRIVATE stacktrace)
 endif()
 set_target_properties(tcmalloc_minimal PROPERTIES
@@ -805,7 +725,7 @@ if(GPERFTOOLS_BUILD_STATIC)
     add_library(tcmalloc_minimal_static STATIC ${libtcmalloc_minimal_internal_la_SOURCES})
     target_compile_definitions(tcmalloc_minimal_static PRIVATE NO_TCMALLOC_SAMPLES NDEBUG)
     target_link_libraries(tcmalloc_minimal_static PRIVATE tcmalloc_minimal_internal Threads::Threads)
-    if(MINGW)
+    if(MINGW AND WITH_STACK_TRACE)
       target_link_libraries(tcmalloc_minimal_static PRIVATE stacktrace)
     endif()
     if(NOT MSVC)
@@ -855,13 +775,10 @@ if(BUILD_TESTING)
           tcmalloc_minimal_large_heap_fragmentation_unittest PUBLIC tcmalloc_minimal)
   add_test(tcmalloc_minimal_large_heap_fragmentation_unittest tcmalloc_minimal_large_heap_fragmentation_unittest)
 
-  if(MINGW OR MSVC)
-    set(port_src src/windows/port.cc)
-  endif()
   add_executable(addressmap_unittest
           src/tests/addressmap_unittest.cc
           src/addressmap-inl.h
-          ${port_src})
+          ${MAYBE_PORT_CC})
   target_link_libraries(addressmap_unittest logging)
   add_test(addressmap_unittest addressmap_unittest)
 
@@ -924,16 +841,13 @@ if(BUILD_TESTING)
   if(NOT MSVC)
     add_executable(malloc_extension_c_test src/tests/malloc_extension_c_test.cc)
     target_link_libraries(malloc_extension_c_test PUBLIC
-            tcmalloc_minimal stdc++ m)
-    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-      target_compile_options(malloc_extension_c_test PUBLIC "-ansi")
-    endif()
+            tcmalloc_minimal)
     add_test(malloc_extension_c_test malloc_extension_c_test)
   endif()
 
   if(NOT MINGW AND NOT MSVC AND NOT APPLE)
     set(memalign_unittest_SOURCES src/tests/memalign_unittest.cc
-            src/tcmalloc.h
+            src/tcmalloc_internal.h
             src/config_for_unittests.h
             src/tests/testutil.h src/tests/testutil.cc)
     add_executable(memalign_unittest ${memalign_unittest_SOURCES})
@@ -942,11 +856,11 @@ if(BUILD_TESTING)
   endif()
 
   add_executable(page_heap_test src/tests/page_heap_test.cc)
-  if(MSVC)
+  if(MSVC OR MINGW)
     # page_heap_test was changed such that it now refers to an unexported symbol.
     # Temporary workaround by linking to the .obj files instead of tcmalloc_minimal.
     # Also see commit e521472 for the VSProj changes.
-    target_link_libraries(page_heap_test PRIVATE tcmalloc_minimal_internal Threads::Threads)
+    target_link_libraries(page_heap_test tcmalloc_minimal spinlock sysinfo logging)
   else()
     target_link_libraries(page_heap_test tcmalloc_minimal)
   endif()
@@ -960,9 +874,13 @@ if(BUILD_TESTING)
   target_link_libraries(safe_strerror_test logging)
   add_test(safe_strerror_test safe_strerror_test)
 
-  add_executable(generic_writer_test src/tests/generic_writer_test.cc)
+  add_executable(generic_writer_test src/tests/generic_writer_test.cc ${MAYBE_PORT_CC})
   target_link_libraries(generic_writer_test logging)
   add_test(generic_writer_test generic_writer_test)
+
+  add_executable(proc_maps_iterator_test src/tests/proc_maps_iterator_test.cc ${MAYBE_PORT_CC})
+  target_link_libraries(proc_maps_iterator_test sysinfo logging)
+  add_test(proc_maps_iterator_test proc_maps_iterator_test)
 
   set(realloc_unittest_SOURCES src/tests/realloc_unittest.cc
           src/config_for_unittests.h
@@ -1165,7 +1083,7 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
     set(TCMALLOC_UNITTEST_INCLUDES src/config_for_unittests.h
             src/gperftools/malloc_extension.h)
     set(tcmalloc_unittest_SOURCES src/tests/tcmalloc_unittest.cc
-            src/tcmalloc.h
+            src/tcmalloc_internal.h
             src/tests/testutil.h src/tests/testutil.cc
             ${TCMALLOC_UNITTEST_INCLUDES})
     set(tcmalloc_unittest_LIBADD ${TCMALLOC_FLAGS} logging Threads::Threads)
@@ -1237,13 +1155,6 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
       target_link_libraries(heap_profiler_unittest ${TCMALLOC_FLAGS} tcmalloc Threads::Threads)
       add_test(NAME heap-profiler_unittest.sh
               COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/tests/heap-profiler_unittest.sh" heap-profiler_unittest)
-
-      # Tests the compatibility include-headers in google/.  Requires a function
-      # defined in the heap-profiler, which is why the test lives here.
-      add_executable(simple_compat_test src/tests/simple_compat_test.cc
-              ${googleinclude_HEADERS})
-      target_link_libraries(simple_compat_test ${TCMALLOC_FLAGS} tcmalloc)
-      add_test(simple_compat_test simple_compat_test)
     endif()
     if(GPERFTOOLS_BUILD_HEAP_CHECKER)
       set(HEAP_CHECKER_UNITTEST_INCLUDES src/config_for_unittests.h
@@ -1322,11 +1233,11 @@ if(GPERFTOOLS_BUILD_CPU_PROFILER)
   set(S_CPU_PROFILER_INCLUDES src/profiledata.h
           src/profile-handler.h
           src/getpc.h
+          src/base/threading.h
           src/base/basictypes.h
           src/base/commandlineflags.h
           src/base/googleinit.h
           src/base/logging.h
-          src/base/simple_mutex.h
           src/base/sysinfo.h
           ${SPINLOCK_INCLUDES}
           ${LOGGING_INCLUDES})
@@ -1369,6 +1280,7 @@ if(GPERFTOOLS_BUILD_CPU_PROFILER)
             src/profiledata.h
             src/base/commandlineflags.h
             src/base/logging.h
+            src/base/threading.h
             src/base/basictypes.h)
     target_link_libraries(profiledata_unittest ${LIBPROFILER})
     add_test(profiledata_unittest profiledata_unittest)

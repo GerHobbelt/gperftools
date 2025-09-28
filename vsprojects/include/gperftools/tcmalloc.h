@@ -1,4 +1,4 @@
-// -*- Mode: C; c-basic-offset: 2; indent-tabs-mode: nil -*-
+/* -*- Mode: C; c-basic-offset: 2; indent-tabs-mode: nil -*- */
 /* Copyright (c) 2003, Google Inc.
  * All rights reserved.
  *
@@ -47,12 +47,17 @@
 #define TC_VERSION_PATCH  ""
 #define TC_VERSION_STRING "gperftools 2.15"
 
+#ifndef _WIN32
+/* For struct mallinfo, if it's defined. */
+#if 1 || 1 
+# include <malloc.h>
+#endif
+#endif
+
 #ifndef PERFTOOLS_NOTHROW
 
-#if __cplusplus >= 201103L
+#ifdef __cplusplus
 #define PERFTOOLS_NOTHROW noexcept
-#elif defined(__cplusplus)
-#define PERFTOOLS_NOTHROW throw()
 #else
 # ifdef __GNUC__
 #  define PERFTOOLS_NOTHROW __attribute__((__nothrow__))
@@ -100,6 +105,15 @@ extern "C" {
   PERFTOOLS_DLL_DECL void tc_malloc_stats(void) PERFTOOLS_NOTHROW;
   PERFTOOLS_DLL_DECL int tc_mallopt(int cmd, int value) PERFTOOLS_NOTHROW;
 
+#ifndef _WIN32
+#if 1
+  PERFTOOLS_DLL_DECL struct mallinfo tc_mallinfo(void) PERFTOOLS_NOTHROW;
+#endif
+#if 1
+  PERFTOOLS_DLL_DECL struct mallinfo2 tc_mallinfo2(void) PERFTOOLS_NOTHROW;
+#endif
+#endif
+
   /*
    * This is an alias for MallocExtension::instance()->GetAllocatedSize().
    * It is equivalent to
@@ -126,7 +140,9 @@ extern "C" {
   PERFTOOLS_DLL_DECL void tc_deletearray_nothrow(void* p,
                                                  const std::nothrow_t&) PERFTOOLS_NOTHROW;
 
-#if defined(__cpp_aligned_new) || (defined(_MSVC_LANG) && _MSVC_LANG > 201402L)
+#if defined(__cpp_aligned_new) || \
+    (defined(__cplusplus) && __cplusplus >= 201703L) || \
+    (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
   PERFTOOLS_DLL_DECL void* tc_new_aligned(size_t size, std::align_val_t al);
   PERFTOOLS_DLL_DECL void* tc_new_aligned_nothrow(size_t size, std::align_val_t al,
                                           const std::nothrow_t&) PERFTOOLS_NOTHROW;
@@ -142,6 +158,7 @@ extern "C" {
   PERFTOOLS_DLL_DECL void tc_deletearray_aligned_nothrow(void* p, std::align_val_t al,
                                                  const std::nothrow_t&) PERFTOOLS_NOTHROW;
 #endif
+
 }
 #endif
 

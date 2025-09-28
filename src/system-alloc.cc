@@ -71,13 +71,6 @@
 # define MADV_FREE  MADV_DONTNEED
 #endif
 
-// Solaris has a bug where it doesn't declare madvise() for C++.
-//    http://www.opensolaris.org/jive/thread.jspa?threadID=21035&tstart=0
-#if defined(__sun) && defined(__SVR4)
-# include <sys/types.h>    // for caddr_t
-  extern "C" { extern int madvise(caddr_t, size_t, int); }
-#endif
-
 // Set kDebugMode mode so that we can have use C++ conditionals
 // instead of preprocessor conditionals.
 #ifdef NDEBUG
@@ -99,10 +92,10 @@ static bool CheckAddressBits(uintptr_t ptr) {
   return always_ok || ((ptr >> shift_bits) == 0);
 }
 
-COMPILE_ASSERT(kAddressBits <= 8 * sizeof(void*),
-               address_bits_larger_than_pointer_size);
+static_assert(kAddressBits <= 8 * sizeof(void*),
+              "address bits larger than pointer size");
 
-static SpinLock spinlock(SpinLock::LINKER_INITIALIZED);
+static SpinLock spinlock;
 
 #if defined(HAVE_MMAP) || defined(MADV_FREE)
 // Page size is initialized on demand (only needed for mmap-based allocators)
@@ -359,7 +352,14 @@ void InitSystemAllocators(void) {
   // the heap-checker is less likely to misinterpret a number as a
   // pointer).
   DefaultSysAllocator *sdef = new (default_space.buf) DefaultSysAllocator();
-  if (kDebugMode && sizeof(void*) > 4) {
+  bool want_mmap = kDebugMode && (sizeof(void*) > 4);
+#if __sun__
+  // TODO: solaris has nice but annoying feature that makes it use
+  // full range of addresses and mmap tends to use it. Making mmap-ed
+  // addresses be 0xffff... For now lets avoid the trouble.
+  want_mmap = false;
+#endif
+  if (want_mmap) {
     sdef->SetChildAllocator(mmap, 0, mmap_name);
     sdef->SetChildAllocator(sbrk, 1, sbrk_name);
   } else {

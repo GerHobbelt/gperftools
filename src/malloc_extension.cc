@@ -37,35 +37,26 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string>
+
+#include <algorithm>
+
 #include "base/dynamic_annotations.h"
-#include "base/sysinfo.h"    // for FillProcSelfMaps
+#include "base/googleinit.h"
+#include "base/proc_maps_iterator.h"
+#include "gperftools/malloc_extension.h"
+#include "gperftools/malloc_extension_c.h"
+
 #ifndef NO_HEAP_CHECK
 #include "gperftools/heap-checker.h"
 #endif
-#include "gperftools/malloc_extension.h"
-#include "gperftools/malloc_extension_c.h"
-#include "base/googleinit.h"
 
 using std::string;
 using std::vector;
 
 static void DumpAddressMap(string* result) {
-  *result += "\nMAPPED_LIBRARIES:\n";
-  // We keep doubling until we get a fit
-  const size_t old_resultlen = result->size();
-  for (int amap_size = 10240; amap_size < 10000000; amap_size *= 2) {
-    result->resize(old_resultlen + amap_size);
-    bool wrote_all = false;
-    const int bytes_written =
-        tcmalloc::FillProcSelfMaps(&((*result)[old_resultlen]), amap_size,
-                                   &wrote_all);
-    if (wrote_all) {   // we fit!
-      (*result)[old_resultlen + bytes_written] = '\0';
-      result->resize(old_resultlen + bytes_written);
-      return;
-    }
-  }
-  result->reserve(old_resultlen);   // just don't print anything
+  tcmalloc::StringGenericWriter writer(result);
+  writer.AppendStr("\nMAPPED_LIBRARIES:\n");
+  tcmalloc::SaveProcSelfMaps(&writer);
 }
 
 // Note: this routine is meant to be called before threads are spawned.
@@ -257,10 +248,10 @@ void PrintCountAndSize(MallocExtensionWriter* writer,
   char buf[100];
   snprintf(buf, sizeof(buf),
            "%6" PRIu64 ": %8" PRIu64 " [%6" PRIu64 ": %8" PRIu64 "] @",
-           static_cast<uint64>(count),
-           static_cast<uint64>(size),
-           static_cast<uint64>(count),
-           static_cast<uint64>(size));
+           static_cast<uint64_t>(count),
+           static_cast<uint64_t>(size),
+           static_cast<uint64_t>(count),
+           static_cast<uint64_t>(size));
   writer->append(buf, strlen(buf));
 }
 

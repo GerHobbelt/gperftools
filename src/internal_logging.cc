@@ -42,12 +42,12 @@
 #endif
 
 #include <gperftools/malloc_extension.h>
-#include "base/logging.h"   // for perftools_vsnprintf
+#include "base/logging.h"
 #include "base/spinlock.h"              // for SpinLockHolder, SpinLock
 
 // Variables for storing crash output.  Allocated statically since we
 // may not be able to heap-allocate while crashing.
-static SpinLock crash_lock(base::LINKER_INITIALIZED);
+static SpinLock crash_lock;
 static bool crashed = false;
 static const int kStatsBufferSize = 16 << 10;
 static char stats_buffer[kStatsBufferSize] = { 0 };
@@ -55,7 +55,7 @@ static char stats_buffer[kStatsBufferSize] = { 0 };
 namespace tcmalloc {
 
 static void WriteMessage(const char* msg, int length) {
-  write(STDERR_FILENO, msg, length);
+  WRITE_TO_STDERR(msg, length);
 }
 
 void (*log_message_writer)(const char* msg, int length) = WriteMessage;
@@ -176,10 +176,10 @@ void TCMalloc_Printer::printf(const char* format, ...) {
   if (left_ > 0) {
     va_list ap;
     va_start(ap, format);
-    const int r = perftools_vsnprintf(buf_, left_, format, ap);
+    const int r = vsnprintf(buf_, left_, format, ap);
     va_end(ap);
     if (r < 0) {
-      // Perhaps an old glibc that returns -1 on truncation?
+      // Some kind of error
       left_ = 0;
     } else if (r > left_) {
       // Truncation

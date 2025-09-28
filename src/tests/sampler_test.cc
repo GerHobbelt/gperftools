@@ -84,7 +84,7 @@ static std::string StringPrintf(const char* format, ...) {
   char buf[256];   // should be big enough for all logging
   va_list ap;
   va_start(ap, format);
-  perftools_vsnprintf(buf, sizeof(buf), format, ap);
+  vsnprintf(buf, sizeof(buf), format, ap);
   va_end(ap);
   return buf;
 }
@@ -394,7 +394,7 @@ TEST(Sampler, IsMeanRight) {
 }
 
 // This flag is for the OldSampler class to use
-const int64 FLAGS_mock_tcmalloc_sample_parameter = 1<<19;
+const int64_t FLAGS_mock_tcmalloc_sample_parameter = 1<<19;
 
 // A cut down and slightly refactored version of the old Sampler
 class OldSampler {

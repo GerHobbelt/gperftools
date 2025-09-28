@@ -92,7 +92,13 @@
     <ClCompile Include="..\..\src\base\sysinfo.cc">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\base\proc_maps_iterator.cc">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\thread_cache.cc">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\thread_cache_ptr.cc">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\fake_stacktrace_scope.cc">
@@ -115,7 +121,7 @@
     <ClInclude Include="..\..\src\base\commandlineflags.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\src\windows\config.h">
+    <ClInclude Include="..\config.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\base\googleinit.h">
@@ -164,9 +170,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\windows\mini_disassembler_types.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\src\base\mutex.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\packed-cache-inl.h">
@@ -223,13 +226,16 @@
     <ClInclude Include="..\..\src\system-alloc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\src\tcmalloc.h">
+    <ClInclude Include="..\..\src\tcmalloc_internal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\base\thread_annotations.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\thread_cache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\thread_cache_ptr.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

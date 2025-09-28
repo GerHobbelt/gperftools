@@ -48,9 +48,6 @@
 # include <sys/malloc.h>
 # endif
 #endif
-#ifdef HAVE_PTHREAD
-#include <pthread.h>
-#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -67,8 +64,12 @@
 #include <gperftools/malloc_hook.h>
 #include <gperftools/stacktrace.h>
 
+// Will be pulled in as along with tcmalloc.cc
+// #include <gperftools/tcmalloc.h>
+
 #include "addressmap-inl.h"
 #include "base/commandlineflags.h"
+#include "base/threading.h"
 #include "base/googleinit.h"
 #include "base/logging.h"
 #include "base/spinlock.h"
@@ -196,7 +197,7 @@ class FreeQueue {
 
 struct MallocBlockQueueEntry {
   MallocBlockQueueEntry() : block(NULL), size(0),
-                            num_deleter_pcs(0), deleter_threadid(0) {}
+                            num_deleter_pcs(0) {}
   MallocBlockQueueEntry(MallocBlock* b, size_t s) : block(b), size(s) {
     if (FLAGS_max_free_queue_size != 0 && b != NULL) {
       // Adjust the number of frames to skip (4) if you change the
@@ -206,12 +207,9 @@ struct MallocBlockQueueEntry {
           deleter_pcs,
           sizeof(deleter_pcs) / sizeof(deleter_pcs[0]),
           4);
-      deleter_threadid = pthread_self();
+      deleter_threadid = std::this_thread::get_id();
     } else {
       num_deleter_pcs = 0;
-      // Zero is an illegal pthread id by my reading of the pthread
-      // implementation:
-      deleter_threadid = 0;
     }
   }
 
@@ -224,7 +222,7 @@ struct MallocBlockQueueEntry {
   // overhead under the LP64 data model.)
   void* deleter_pcs[16];
   int num_deleter_pcs;
-  pthread_t deleter_threadid;
+  std::thread::id deleter_threadid;
 };
 
 class MallocBlock {
@@ -302,23 +300,23 @@ class MallocBlock {
   // or the type or'ed with kDeallocatedTypeBit
   // for each formerly allocated object.
   typedef AddressMap<int> AllocMap;
-  static AllocMap* alloc_map_;
+  static inline AllocMap* alloc_map_;
   // This protects alloc_map_ and consistent state of metadata
   // for each still-allocated object in it.
   // We use spin locks instead of pthread_mutex_t locks
   // to prevent crashes via calls to pthread_mutex_(un)lock
   // for the (de)allocations coming from pthreads initialization itself.
-  static SpinLock alloc_map_lock_;
+  static inline SpinLock alloc_map_lock_;
 
   // A queue of freed blocks.  Instead of releasing blocks to the allocator
   // immediately, we put them in a queue, freeing them only when necessary
   // to keep the total size of all the freed blocks below the limit set by
   // FLAGS_max_free_queue_size.
-  static FreeQueue<MallocBlockQueueEntry>* free_queue_;
+  static inline FreeQueue<MallocBlockQueueEntry>* free_queue_;
 
-  static size_t free_queue_size_;  // total size of blocks in free_queue_
+  static inline size_t free_queue_size_;  // total size of blocks in free_queue_
   // protects free_queue_ and free_queue_size_
-  static SpinLock free_queue_lock_;
+  static inline SpinLock free_queue_lock_;
 
   // Names of allocation types (kMallocType, kNewType, kArrayNewType)
   static const char* const kAllocName[];
@@ -694,9 +692,8 @@ class MallocBlock {
     const MallocBlock* b = queue_entry.block;
     const size_t size = queue_entry.size;
     if (queue_entry.num_deleter_pcs > 0) {
-      TracePrintf(STDERR_FILENO, "Deleted by thread %p\n",
-                  reinterpret_cast<void*>(
-                      PRINTABLE_PTHREAD(queue_entry.deleter_threadid)));
+      TracePrintf(STDERR_FILENO, "Deleted by thread %" GPRIxTHREADID "\n",
+                  PRINTABLE_THREADID(queue_entry.deleter_threadid));
 
       // We don't want to allocate or deallocate memory here, so we use
       // placement-new.  It's ok that we don't destroy this, since we're
@@ -850,13 +847,6 @@ void DanglingWriteChecker() {
 const size_t MallocBlock::kMagicMalloc;
 const size_t MallocBlock::kMagicMMap;
 
-MallocBlock::AllocMap* MallocBlock::alloc_map_ = NULL;
-SpinLock MallocBlock::alloc_map_lock_(SpinLock::LINKER_INITIALIZED);
-
-FreeQueue<MallocBlockQueueEntry>* MallocBlock::free_queue_ = NULL;
-size_t MallocBlock::free_queue_size_ = 0;
-SpinLock MallocBlock::free_queue_lock_(SpinLock::LINKER_INITIALIZED);
-
 unsigned char MallocBlock::kMagicDeletedBuffer[1024];
 tcmalloc::TrivialOnce MallocBlock::deleted_buffer_initialized_;
 
@@ -901,7 +891,7 @@ static void TracePrintf(int fd, const char *fmt, ...) {
   while (*p != '\0') {              // until end of format string
     char *s = &numbuf[sizeof(numbuf)-1];
     if (p[0] == '%' && p[1] != 0) {  // handle % formats
-      int64 l = 0;
+      int64_t l = 0;
       unsigned long base = 0;
       if (*++p == 's') {                            // %s
         s = va_arg(ap, char *);
@@ -917,6 +907,10 @@ static void TracePrintf(int fd, const char *fmt, ...) {
         l = va_arg(ap, size_t);
         base = 10;
         p++;
+      } else if (*p == 'z' && p[1] == 'x') {        // %zx
+        l = va_arg(ap, size_t);
+        base = 16;
+        p++;
       } else if (*p == 'u') {                       // %u
         l = va_arg(ap, unsigned int);
         base = 10;
@@ -927,15 +921,15 @@ static void TracePrintf(int fd, const char *fmt, ...) {
         l = va_arg(ap, intptr_t);
         base = 16;
       } else {
-        write(STDERR_FILENO, "Unimplemented TracePrintf format\n", 33);
-        write(STDERR_FILENO, p, 2);
-        write(STDERR_FILENO, "\n", 1);
+        WRITE_TO_STDERR("Unimplemented TracePrintf format\n", 33);
+        WRITE_TO_STDERR(p, 2);
+        WRITE_TO_STDERR("\n", 1);
         abort();
       }
       p++;
       if (base != 0) {
         bool minus = (l < 0 && base == 10);
-        uint64 ul = minus? -l : l;
+        uint64_t ul = minus? -l : l;
         do {
           *--s = "0123456789abcdef"[ul % base];
           ul /= base;
@@ -952,14 +946,16 @@ static void TracePrintf(int fd, const char *fmt, ...) {
     }
     while (*s != 0) {
       if (i == sizeof(buf)) {
-        write(fd, buf, i);
+        auto unused = write(fd, buf, i);
+        (void)unused;
         i = 0;
       }
       buf[i++] = *s++;
     }
   }
   if (i != 0) {
-    write(fd, buf, i);
+    auto unused = write(fd, buf, i);
+    (void)unused;
   }
   va_end(ap);
 }
@@ -1002,17 +998,17 @@ static void TraceStack(void) {
 }
 
 // This protects MALLOC_TRACE, to make sure its info is atomically written.
-static SpinLock malloc_trace_lock(SpinLock::LINKER_INITIALIZED);
+static SpinLock malloc_trace_lock;
 
-#define MALLOC_TRACE(name, size, addr)                                  \
-  do {                                                                  \
-    if (FLAGS_malloctrace) {                                            \
-      SpinLockHolder l(&malloc_trace_lock);                             \
-      TracePrintf(TraceFd(), "%s\t%zu\t%p\t%" GPRIuPTHREAD,      \
-                  name, size, addr, PRINTABLE_PTHREAD(pthread_self())); \
-      TraceStack();                                                     \
-      TracePrintf(TraceFd(), "\n");                                     \
-    }                                                                   \
+#define MALLOC_TRACE(name, size, addr)                                               \
+  do {                                                                               \
+    if (FLAGS_malloctrace) {                                                         \
+      SpinLockHolder l(&malloc_trace_lock);                                          \
+      TracePrintf(TraceFd(), "%s\t%zu\t%p\t%" GPRIuTHREADID,                         \
+                  name, size, addr, PRINTABLE_THREADID(std::this_thread::get_id())); \
+      TraceStack();                                                                  \
+      TracePrintf(TraceFd(), "\n");                                                  \
+    }                                                                                \
   } while (0)
 
 // ========================================================================= //
@@ -1025,7 +1021,8 @@ static SpinLock malloc_trace_lock(SpinLock::LINKER_INITIALIZED);
 // to use it.
 void __malloctrace_write(const char *buf, size_t size) {
   if (FLAGS_malloctrace) {
-    write(TraceFd(), buf, size);
+    auto unused = write(TraceFd(), buf, size);
+    (void)unused;
   }
 }
 
@@ -1243,7 +1240,7 @@ static void force_frame() {
 }
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_malloc(size_t size) PERFTOOLS_NOTHROW {
-  if (ThreadCache::IsUseEmergencyMalloc()) {
+  if (tcmalloc::IsUseEmergencyMalloc()) {
     return tcmalloc::EmergencyMalloc(size);
   }
   void* ptr = do_debug_malloc_or_debug_cpp_alloc(size);
@@ -1267,7 +1264,7 @@ extern "C" PERFTOOLS_DLL_DECL void tc_free_sized(void *ptr, size_t size) PERFTOO
 }
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_calloc(size_t count, size_t size) PERFTOOLS_NOTHROW {
-  if (ThreadCache::IsUseEmergencyMalloc()) {
+  if (tcmalloc::IsUseEmergencyMalloc()) {
     return tcmalloc::EmergencyCalloc(count, size);
   }
   // Overflow check
@@ -1436,8 +1433,8 @@ static void *retry_debug_memalign(void *arg) {
   return do_debug_memalign(data->align, data->size, data->type);
 }
 
-ATTRIBUTE_ALWAYS_INLINE
-inline void* do_debug_memalign_or_debug_cpp_memalign(size_t align,
+ALWAYS_INLINE
+void* do_debug_memalign_or_debug_cpp_memalign(size_t align,
                                                      size_t size,
                                                      int type,
                                                      bool from_operator,
@@ -1500,8 +1497,6 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_pvalloc(size_t size) PERFTOOLS_NOTHROW {
   return p;
 }
 
-#if defined(ENABLE_ALIGNED_NEW_DELETE)
-
 extern "C" PERFTOOLS_DLL_DECL void* tc_new_aligned(size_t size, std::align_val_t align) {
   void* result = do_debug_memalign_or_debug_cpp_memalign(static_cast<size_t>(align), size, MallocBlock::kNewType, true, false);
   MallocHook::InvokeNewHook(result, size);
@@ -1559,8 +1554,6 @@ extern "C" PERFTOOLS_DLL_DECL void tc_deletearray_sized_aligned(void* p, size_t 
 extern "C" PERFTOOLS_DLL_DECL void tc_deletearray_aligned_nothrow(void* p, std::align_val_t, const std::nothrow_t&) PERFTOOLS_NOTHROW {
   tc_deletearray(p);
 }
-
-#endif // defined(ENABLE_ALIGNED_NEW_DELETE)
 
 // malloc_stats just falls through to the base implementation.
 extern "C" PERFTOOLS_DLL_DECL void tc_malloc_stats(void) PERFTOOLS_NOTHROW {
