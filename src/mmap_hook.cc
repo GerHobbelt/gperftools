@@ -29,6 +29,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// We require "native" off_t for the system. So that we're able to
+// interpose native libc's mmap/mmap64 correctly. Thus we "turn off"
+// _FILE_OFFSET_BITS define even if user asked for 64-bit off_t.
+#undef _FILE_OFFSET_BITS
+// Also, glibc somewhat reasonably insists that _TIME_BITS=64 has to
+// imply _FILE_OFFSET_BITS=64. So with us undef-inf _FILE_OFFSET_BITS,
+// we sadly need to do the same for _TIME_BITS. Thankfully, none of
+// the code in this file depends on time_t. Otherwise, we'd be risking
+// trouble.
+#undef _TIME_BITS
+
 #include <config.h>
 
 #include "mmap_hook.h"
@@ -289,9 +300,9 @@ static_assert(sizeof(int64_t) == sizeof(off_t), "");
 #undef mmap64
 #undef mmap
 
-extern "C" void* mmap64(void* start, size_t length, int prot, int flags, int fd, off_t off)
+extern "C" PERFTOOLS_DLL_DECL void* mmap64(void* start, size_t length, int prot, int flags, int fd, off_t off)
   __THROW ATTRIBUTE_SECTION(malloc_hook);
-extern "C" void* mmap(void* start, size_t length, int prot, int flags, int fd, off_t off)
+extern "C" PERFTOOLS_DLL_DECL void* mmap(void* start, size_t length, int prot, int flags, int fd, off_t off)
   __THROW ATTRIBUTE_SECTION(malloc_hook);
 
 void* mmap64(void* start, size_t length, int prot, int flags, int fd, off_t off) __THROW {
@@ -309,9 +320,9 @@ void* mmap(void* start, size_t length, int prot, int flags, int fd, off_t off) _
 
 static_assert(sizeof(int32_t) == sizeof(off_t), "");
 
-extern "C" void* mmap64(void* start, size_t length, int prot, int flags, int fd, int64_t off)
+extern "C" PERFTOOLS_DLL_DECL void* mmap64(void* start, size_t length, int prot, int flags, int fd, int64_t off)
   __THROW ATTRIBUTE_SECTION(malloc_hook);
-extern "C" void* mmap(void* start, size_t length, int prot, int flags, int fd, off_t off)
+extern "C" PERFTOOLS_DLL_DECL void* mmap(void* start, size_t length, int prot, int flags, int fd, off_t off)
   __THROW ATTRIBUTE_SECTION(malloc_hook);
 
 void* mmap(void *start, size_t length, int prot, int flags, int fd, off_t off) __THROW {
@@ -329,7 +340,7 @@ void* mmap64(void *start, size_t length, int prot, int flags, int fd, int64_t of
 
 #ifdef HOOKED_MMAP
 
-extern "C" int munmap(void* start, size_t length) __THROW ATTRIBUTE_SECTION(malloc_hook);
+extern "C" PERFTOOLS_DLL_DECL int munmap(void* start, size_t length) __THROW ATTRIBUTE_SECTION(malloc_hook);
 int munmap(void* start, size_t length) __THROW {
   int result = tcmalloc::DirectMUnMap(/* invoke_hooks=*/ false, start, length);
   if (result < 0) {
@@ -371,8 +382,9 @@ int tcmalloc::DirectMUnMap(bool invoke_hooks, void *start, size_t length) {
 }
 
 #if __linux__
-extern "C" void* mremap(void* old_addr, size_t old_size, size_t new_size,
-                        int flags, ...) __THROW ATTRIBUTE_SECTION(malloc_hook);
+extern "C" PERFTOOLS_DLL_DECL
+void* mremap(void* old_addr, size_t old_size, size_t new_size,
+             int flags, ...) __THROW ATTRIBUTE_SECTION(malloc_hook);
 // We only handle mremap on Linux so far.
 void* mremap(void* old_addr, size_t old_size, size_t new_size,
              int flags, ...) __THROW {
@@ -405,7 +417,7 @@ void* mremap(void* old_addr, size_t old_size, size_t new_size,
 // glibc's version:
 extern "C" void* __sbrk(intptr_t increment);
 
-extern "C" void* sbrk(intptr_t increment) __THROW ATTRIBUTE_SECTION(malloc_hook);
+extern "C" PERFTOOLS_DLL_DECL void* sbrk(intptr_t increment) __THROW ATTRIBUTE_SECTION(malloc_hook);
 
 void* sbrk(intptr_t increment) __THROW {
   void *result = __sbrk(increment);
@@ -422,8 +434,8 @@ void* sbrk(intptr_t increment) __THROW {
 
 #endif
 
-#if defined(__FreeBSD__) && defined(_LP64)
-extern "C" void* sbrk(intptr_t increment) __THROW ATTRIBUTE_SECTION(malloc_hook);
+#if defined(__FreeBSD__) && defined(_LP64) && HAVE_SBRK
+extern "C" PERFTOOLS_DLL_DECL void* sbrk(intptr_t increment) __THROW ATTRIBUTE_SECTION(malloc_hook);
 
 void* sbrk(intptr_t increment) __THROW {
   uintptr_t curbrk = __syscall(SYS_break, nullptr);

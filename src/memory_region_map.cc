@@ -163,20 +163,6 @@ static inline bool current_thread_is(std::thread::id should_be) {
 
 // ========================================================================= //
 
-// Constructor-less place-holder to store a RegionSet in.
-union MemoryRegionMap::RegionSetRep {
-  char rep[sizeof(RegionSet)];
-  void* align_it;  // do not need a better alignment for 'rep' than this
-  RegionSet* region_set() { return reinterpret_cast<RegionSet*>(rep); }
-};
-
-// The bytes where MemoryRegionMap::regions_ will point to.
-// We use RegionSetRep with noop c-tor so that global construction
-// does not interfere.
-static MemoryRegionMap::RegionSetRep regions_rep;
-
-// ========================================================================= //
-
 // Has InsertRegionLocked been called recursively
 // (or rather should we *not* use regions_ to record a hooked mmap).
 static bool recursive_insert = false;
@@ -206,7 +192,7 @@ void MemoryRegionMap::Init(int max_stack_depth, bool use_buckets) NO_THREAD_SAFE
   // Note that Init() can be (and is) sometimes called
   // already from within an mmap/sbrk hook.
   recursive_insert = true;
-  arena_ = LowLevelAlloc::NewArena(0, LowLevelAlloc::DefaultArena());
+  arena_ = LowLevelAlloc::NewArena(nullptr);
   recursive_insert = false;
   HandleSavedRegionsLocked(&InsertRegionLocked);  // flush the buffered ones
     // Can't instead use HandleSavedRegionsLocked(&DoInsertRegionLocked) before
@@ -527,7 +513,7 @@ void MemoryRegionMap::RestoreSavedBucketsLocked() {
 
 inline void MemoryRegionMap::InitRegionSetLocked() {
   RAW_VLOG(12, "Initializing region set");
-  regions_ = regions_rep.region_set();
+  regions_ = regions_rep_.get();
   recursive_insert = true;
   new (regions_) RegionSet();
   HandleSavedRegionsLocked(&DoInsertRegionLocked);

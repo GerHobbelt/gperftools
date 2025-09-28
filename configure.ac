@@ -253,7 +253,6 @@ AC_MSG_RESULT($ac_cv___attribute__aligned_fn)
 # TODO(csilvers): we could remove a lot when WITH_CPU_PROFILER etc is "no".
 AC_CHECK_TYPES([struct mallinfo],,, [#include <malloc.h>])
 AC_CHECK_TYPES([struct mallinfo2],,, [#include <malloc.h>])
-AC_CHECK_TYPES([Elf32_Versym],,, [#include <elf.h>])   # for vdso_support.h
 AC_CHECK_FUNCS(sbrk)            # for tcmalloc to get memory
 AC_CHECK_FUNCS(__sbrk)          # for tcmalloc to get memory
 AC_CHECK_FUNCS(geteuid)         # for turning off services when run as root
@@ -268,9 +267,6 @@ AC_CHECK_HEADERS(sys/socket.h)  # optional; for forking out to symbolizer
 AC_CHECK_HEADERS(sys/wait.h)    # optional; for forking out to symbolizer
 AC_CHECK_HEADERS(poll.h)        # optional; for forking out to symbolizer
 AC_CHECK_HEADERS(fcntl.h)       # for tcmalloc_unittest
-AC_CHECK_HEADERS(grp.h)         # for heapchecker_unittest
-AC_CHECK_HEADERS(pwd.h)         # for heapchecker_unittest
-AC_CHECK_HEADERS(sys/resource.h)         # for memalign_unittest.cc
 AC_CHECK_HEADERS(sys/cdefs.h)   # Where glibc defines __THROW
 
 AC_CHECK_HEADERS(sys/ucontext.h)
@@ -450,9 +446,6 @@ AX_PTHREAD
 # Figure out where libc has program_invocation_name
 AC_PROGRAM_INVOCATION_NAME
 
-# Make the install prefix available, to figure out where to look for pprof
-AC_INSTALL_PREFIX
-
 dnl only very recent mingw has sleep and nanosleep
 case "$host" in
    *-mingw*)
@@ -482,15 +475,17 @@ AS_IF([test "x$ac_cv_header_execinfo_h" = xyes],
      LIBS=$save_LIBS]))
 AC_SUBST(STACKTRACE_UNITTEST_LIBS)
 
-# For windows, this has a non-trivial value (__declspec(export)), but any
-# system that uses configure wants this to be the empty string.
-AC_DEFINE(PERFTOOLS_DLL_DECL,,
-          [Always the empty-string on non-windows systems.
-           On windows, should be "__declspec(dllexport)".
-	   This way, when we compile the dll, we export our functions/classes.
-	   It's safe to define this here because config.h is only used
-	   internally, to compile the DLL, and every DLL source file
-	   #includes "config.h" before anything else.])
+AC_ARG_ENABLE([hidden-visibility],
+              [AS_HELP_STRING([--enable-hidden-visibility],
+                              [build libraries with -fvisibility=hidden])],
+              [enable_visibility=yes],
+              [enable_visibility=no])
+
+AC_DEFINE([PERFTOOLS_DLL_DECL], [], [dllexport or attribute visibility])
+
+AS_IF([test "x$enable_visibility" = xyes],
+  [AC_DEFINE([PERFTOOLS_DLL_DECL], [__attribute((visibility("default")))], [])
+   CXXFLAGS="-fvisibility=hidden $CXXFLAGS"])
 
 # In theory, config.h files shouldn't need a header guard.
 # Now there were historical reasons for doing so

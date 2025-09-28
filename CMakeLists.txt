@@ -186,9 +186,6 @@ check_c_source_compiles("#include <stdlib.h>
 set(CMAKE_EXTRA_INCLUDE_FILES "malloc.h")
 check_type_size("struct mallinfo" STRUCT_MALLINFO LANGUAGE CXX)
 check_type_size("struct mallinfo2" STRUCT_MALLINFO2 LANGUAGE CXX)
-set(CMAKE_EXTRA_INCLUDE_FILES "elf.h")
-check_type_size("Elf32_Versym" ELF32_VERSYM LANGUAGE CXX) # for vdso_support.h
-set(CMAKE_EXTRA_INCLUDE_FILES)
 check_function_exists("sbrk" HAVE_SBRK) # for tcmalloc to get memory
 check_function_exists("__sbrk" HAVE___SBRK) # for tcmalloc to get memory
 check_function_exists("geteuid" HAVE_GETEUID) # for turning off services when run as root
@@ -203,9 +200,6 @@ check_include_file("sys/socket.h" HAVE_SYS_SOCKET_H) # optional; for forking out
 check_include_file("sys/wait.h" HAVE_SYS_WAIT_H) # optional; for forking out to symbolizer
 check_include_file("poll.h" HAVE_POLL_H) # optional; for forking out to symbolizer
 check_include_file("fcntl.h" HAVE_FCNTL_H) # for tcmalloc_unittest
-check_include_file("grp.h" HAVE_GRP_H) # for heapchecker_unittest
-check_include_file("pwd.h" HAVE_PWD_H) # for heapchecker_unittest
-check_include_file("sys/resource.h" HAVE_SYS_RESOURCE_H) # for memalign_unittest.cc
 check_include_file("sys/cdefs.h" HAVE_SYS_CDEFS_H) # Where glibc defines __THROW
 
 check_include_file("sys/ucontext.h" HAVE_SYS_UCONTEXT_H)
@@ -562,7 +556,7 @@ if(BUILD_TESTING)
   add_executable(tcmalloc_minimal_unittest
     src/tests/tcmalloc_unittest.cc
     src/tests/testutil.cc)
-  target_link_libraries(tcmalloc_minimal_unittest tcmalloc_minimal)
+  target_link_libraries(tcmalloc_minimal_unittest tcmalloc_minimal gtest)
   add_test(tcmalloc_minimal_unittest tcmalloc_minimal_unittest)
 
   add_executable(tcmalloc_minimal_large_unittest
@@ -574,7 +568,7 @@ if(BUILD_TESTING)
   add_executable(tcmalloc_minimal_large_heap_fragmentation_unittest
           src/tests/large_heap_fragmentation_unittest.cc)
   target_link_libraries(
-          tcmalloc_minimal_large_heap_fragmentation_unittest tcmalloc_minimal)
+          tcmalloc_minimal_large_heap_fragmentation_unittest tcmalloc_minimal gtest)
   add_test(tcmalloc_minimal_large_heap_fragmentation_unittest tcmalloc_minimal_large_heap_fragmentation_unittest)
 
   add_executable(addressmap_unittest
@@ -582,11 +576,11 @@ if(BUILD_TESTING)
   target_link_libraries(addressmap_unittest common gtest)
   add_test(addressmap_unittest addressmap_unittest)
 
-  if(NOT MINGW AND NOT MSVC)
-    add_executable(system_alloc_unittest src/tests/system-alloc_unittest.cc)
-    target_link_libraries(system_alloc_unittest tcmalloc_minimal)
-    add_test(system_alloc_unittest system_alloc_unittest)
+  add_executable(system_alloc_unittest src/tests/system-alloc_unittest.cc)
+  target_link_libraries(system_alloc_unittest tcmalloc_minimal gtest)
+  add_test(system_alloc_unittest system_alloc_unittest)
 
+  if(NOT MINGW AND NOT MSVC)
     add_executable(unique_path_unittest src/tests/unique_path_unittest.cc)
     target_link_libraries(unique_path_unittest common gtest)
     add_test(unique_path_unittest unique_path_unittest)
@@ -632,11 +626,9 @@ if(BUILD_TESTING)
   target_link_libraries(malloc_extension_test tcmalloc_minimal gtest)
   add_test(malloc_extension_test malloc_extension_test)
 
-  if(NOT MSVC)
-    add_executable(malloc_extension_c_test src/tests/malloc_extension_c_test.cc)
-    target_link_libraries(malloc_extension_c_test tcmalloc_minimal)
-    add_test(malloc_extension_c_test malloc_extension_c_test)
-  endif()
+  add_executable(malloc_extension_c_test src/tests/malloc_extension_c_test.cc)
+  target_link_libraries(malloc_extension_c_test tcmalloc_minimal gtest)
+  add_test(malloc_extension_c_test malloc_extension_c_test)
 
   if(NOT MINGW AND NOT MSVC AND NOT APPLE)
     add_executable(memalign_unittest src/tests/memalign_unittest.cc src/tests/testutil.cc)
@@ -677,7 +669,7 @@ if(BUILD_TESTING)
   add_test(proc_maps_iterator_test proc_maps_iterator_test)
 
   add_executable(realloc_unittest src/tests/realloc_unittest.cc)
-  target_link_libraries(realloc_unittest tcmalloc_minimal)
+  target_link_libraries(realloc_unittest tcmalloc_minimal gtest)
   add_test(realloc_unittest realloc_unittest)
 
   add_executable(stack_trace_table_test
@@ -706,31 +698,28 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
 
   if(BUILD_TESTING)
     add_executable(tcmalloc_minimal_debug_unittest src/tests/tcmalloc_unittest.cc src/tests/testutil.cc)
-    target_compile_definitions(tcmalloc_minimal_debug_unittest PRIVATE DEBUGALLOCATION)
-    target_link_libraries(tcmalloc_minimal_debug_unittest tcmalloc_minimal_debug)
+    target_link_libraries(tcmalloc_minimal_debug_unittest tcmalloc_minimal_debug gtest)
     add_test(tcmalloc_minimal_debug_unittest tcmalloc_minimal_debug_unittest)
 
     add_executable(malloc_extension_debug_test src/tests/malloc_extension_test.cc)
-    target_link_libraries(malloc_extension_debug_test tcmalloc_minimal_debug)
+    target_link_libraries(malloc_extension_debug_test tcmalloc_minimal_debug gtest)
     add_test(malloc_extension_debug_test malloc_extension_debug_test)
 
     if(NOT MINGW AND NOT APPLE)
       add_executable(memalign_debug_unittest src/tests/memalign_unittest.cc src/tests/testutil.cc)
       target_link_libraries(memalign_debug_unittest
-              tcmalloc_minimal_debug Threads::Threads)
+              tcmalloc_minimal_debug gtest)
       add_test(memalign_debug_unittest memalign_debug_unittest)
     endif()
 
     add_executable(realloc_debug_unittest src/tests/realloc_unittest.cc)
-    target_link_libraries(realloc_debug_unittest PUBLIC tcmalloc_minimal_debug)
+    target_link_libraries(realloc_debug_unittest PUBLIC tcmalloc_minimal_debug gtest)
     add_test(realloc_debug_unittest realloc_debug_unittest)
 
     if(WITH_STACK_TRACE)
       add_executable(debugallocation_test src/tests/debugallocation_test.cc)
-      target_link_libraries(debugallocation_test tcmalloc_minimal_debug)
-
-      add_test(NAME debugallocation_test
-              COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/debugallocation_test.sh)
+      target_link_libraries(debugallocation_test tcmalloc_debug gtest)
+      add_test(debugallocation_test debugallocation_test)
     endif()
   endif()
 endif()
@@ -793,21 +782,18 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
   ### Unittests
   if(BUILD_TESTING)
     add_executable(tcmalloc_unittest src/tests/tcmalloc_unittest.cc src/tests/testutil.cc)
-    target_link_libraries(tcmalloc_unittest tcmalloc)
-    add_test(NAME tcmalloc_unittest
-            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/tests/tcmalloc_unittest.sh")
+    target_link_libraries(tcmalloc_unittest tcmalloc gtest)
+    add_test(tcmalloc_unittest tcmalloc_unittest)
 
     add_executable(tcmalloc_large_unittest src/tests/tcmalloc_large_unittest.cc)
     target_link_libraries(tcmalloc_large_unittest tcmalloc)
     add_test(tcmalloc_large_unittest tcmalloc_large_unittest)
 
     add_executable(tcmalloc_large_heap_fragmentation_unittest src/tests/large_heap_fragmentation_unittest.cc)
-    target_link_libraries(tcmalloc_large_heap_fragmentation_unittest tcmalloc)
+    target_link_libraries(tcmalloc_large_heap_fragmentation_unittest tcmalloc gtest)
     add_test(tcmalloc_large_heap_fragmentation_unittest tcmalloc_large_heap_fragmentation_unittest)
 
-    # sampler_test and sampling_test both require sampling to be turned
-    # on, which it's not by default.  Use the "standard" value of 2^19.
-    list(APPEND TESTS_ENVIRONMENT TCMALLOC_SAMPLE_PARAMETER=524288)
+    list(APPEND TESTS_ENVIRONMENT PPROF_PATH=${CMAKE_CURRENT_SOURCE_DIR}/src/pprof)
 
     add_executable(sampler_test src/tests/sampler_test.cc src/sampler.cc)
     target_link_libraries(sampler_test gtest)
@@ -817,9 +803,9 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
     list(APPEND TESTS_ENVIRONMENT BINDIR=. TMPDIR=/tmp/perftools)
     set(sampling_test_SOURCES src/tests/sampling_test.cc)
     add_executable(sampling_test src/tests/sampling_test.cc)
+    target_compile_definitions(sampling_test PRIVATE PPROF_PATH=${CMAKE_CURRENT_SOURCE_DIR}/src/pprof)
     target_link_libraries(sampling_test tcmalloc)
-    add_test(NAME sampling_test.sh
-            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/tests/sampling_test.sh" sampling_test)
+    add_test(sampling_test sampling_test)
 
     if(GPERFTOOLS_BUILD_HEAP_PROFILER)
       add_executable(heap_profiler_unittest src/tests/heap-profiler_unittest.cc)
@@ -848,13 +834,13 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
     ### Unittests
     if(BUILD_TESTING)
       add_executable(tcmalloc_debug_unittest src/tests/tcmalloc_unittest.cc src/tests/testutil.cc)
-      target_compile_definitions(tcmalloc_debug_unittest PRIVATE DEBUGALLOCATION)
-      target_link_libraries(tcmalloc_debug_unittest tcmalloc_debug)
+      target_link_libraries(tcmalloc_debug_unittest tcmalloc_debug gtest)
       add_test(tcmalloc_debug_unittest tcmalloc_debug_unittest)
 
       add_executable(sampling_debug_test src/tests/sampling_test.cc)
+          target_compile_definitions(sampling_debug_test PRIVATE PPROF_PATH=${CMAKE_CURRENT_SOURCE_DIR}/src/pprof)
       target_link_libraries(sampling_debug_test tcmalloc_debug)
-      add_test(sampling_debug_test.sh "${CMAKE_CURRENT_SOURCE_DIR}/src/tests/sampling_test.sh" sampling_debug_test)
+      add_test(sampling_debug_test sampling_debug_test)
 
       if(GPERFTOOLS_BUILD_HEAP_PROFILER)
         add_executable(heap_profiler_debug_unittest src/tests/heap-profiler_unittest.cc)

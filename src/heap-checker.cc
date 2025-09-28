@@ -367,7 +367,7 @@ class HeapLeakChecker::Allocator {
   static void Init() {
     RAW_DCHECK(heap_checker_lock.IsHeld(), "");
     RAW_DCHECK(arena_ == NULL, "");
-    arena_ = LowLevelAlloc::NewArena(0, LowLevelAlloc::DefaultArena());
+    arena_ = LowLevelAlloc::NewArena(nullptr);
   }
   static void Shutdown() {
     RAW_DCHECK(heap_checker_lock.IsHeld(), "");
@@ -2383,3 +2383,18 @@ const void* HeapLeakChecker::GetAllocCaller(void* ptr) {
   RAW_CHECK(info.stack_depth >= 1, "");
   return info.call_stack[0];
 }
+
+namespace tcmalloc {
+
+ATTRIBUTE_HIDDEN
+void DoIterateMemoryRegionMap(tcmalloc::FunctionRef<void(const void*)> callback) {
+  { MemoryRegionMap::LockHolder l;
+    for (MemoryRegionMap::RegionIterator
+           i = MemoryRegionMap::BeginRegionLocked();
+           i != MemoryRegionMap::EndRegionLocked(); ++i) {
+      callback(&*i);
+    }
+  }
+}
+
+}  // namespace tcmalloc

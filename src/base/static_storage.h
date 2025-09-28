@@ -28,30 +28,34 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef TESTS_LEGACY_ASSERTIONS_H_
-#define TESTS_LEGACY_ASSERTIONS_H_
-#include "base/logging.h"
+#ifndef BASE_STATIC_STORAGE_H_
+#define BASE_STATIC_STORAGE_H_
+#include "config.h"
 
-// TODO: remove after gtest adoption is complete
-// Synonyms for CHECK_* that are used in some unittests.
-#define EXPECT_EQ(val1, val2) CHECK_EQ(val1, val2)
-#define EXPECT_NE(val1, val2) CHECK_NE(val1, val2)
-#define EXPECT_LE(val1, val2) CHECK_LE(val1, val2)
-#define EXPECT_LT(val1, val2) CHECK_LT(val1, val2)
-#define EXPECT_GE(val1, val2) CHECK_GE(val1, val2)
-#define EXPECT_GT(val1, val2) CHECK_GT(val1, val2)
-#define ASSERT_EQ(val1, val2) EXPECT_EQ(val1, val2)
-#define ASSERT_NE(val1, val2) EXPECT_NE(val1, val2)
-#define ASSERT_LE(val1, val2) EXPECT_LE(val1, val2)
-#define ASSERT_LT(val1, val2) EXPECT_LT(val1, val2)
-#define ASSERT_GE(val1, val2) EXPECT_GE(val1, val2)
-#define ASSERT_GT(val1, val2) EXPECT_GT(val1, val2)
-// As are these variants.
-#define EXPECT_TRUE(cond)     CHECK(cond)
-#define EXPECT_FALSE(cond)    CHECK(!(cond))
-#define EXPECT_STREQ(a, b)    CHECK(strcmp(a, b) == 0)
-#define ASSERT_TRUE(cond)     EXPECT_TRUE(cond)
-#define ASSERT_FALSE(cond)    EXPECT_FALSE(cond)
-#define ASSERT_STREQ(a, b)    EXPECT_STREQ(a, b)
+#include <stdint.h>
 
-#endif  // TESTS_LEGACY_ASSERTIONS_H_
+#include <utility>
+
+namespace tcmalloc {
+
+template <typename T>
+class StaticStorage {
+public:
+  T* get() {
+    return reinterpret_cast<T*>(bytes_);
+  }
+  const T* get() const {
+    return reinterpret_cast<const T*>(bytes_);
+  }
+
+  template <class... U>
+  T* Construct(U&&... u) {
+    return new (bytes_) T(std::forward<U>(u)...);
+  }
+private:
+  alignas(alignof(T)) uint8_t bytes_[sizeof(T)];
+};
+
+}  // namespace tcmalloc
+
+#endif  // BASE_STATIC_STORAGE_H_

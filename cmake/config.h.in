@@ -66,9 +66,6 @@
 /* Define to 1 if you have the <glob.h> header file. */
 #cmakedefine HAVE_GLOB_H
 
-/* Define to 1 if you have the <grp.h> header file. */
-#cmakedefine HAVE_GRP_H
-
 /* Define to 1 if you have the <libunwind.h> header file. */
 #cmakedefine01 HAVE_LIBUNWIND_H
 
@@ -92,9 +89,6 @@
 /* define if libc has program_invocation_name */
 #cmakedefine HAVE_PROGRAM_INVOCATION_NAME
 
-/* Define to 1 if you have the <pwd.h> header file. */
-#cmakedefine HAVE_PWD_H
-
 /* Define to 1 if you have the `sbrk' function. */
 #cmakedefine HAVE_SBRK
 
@@ -112,9 +106,6 @@
 
 /* Define to 1 if you have the <sys/malloc.h> header file. */
 #cmakedefine HAVE_SYS_MALLOC_H
-
-/* Define to 1 if you have the <sys/resource.h> header file. */
-#cmakedefine HAVE_SYS_RESOURCE_H
 
 /* Define to 1 if you have the <sys/socket.h> header file. */
 #cmakedefine HAVE_SYS_SOCKET_H
@@ -154,12 +145,6 @@
 
 /* Define to 1 if you have the `__sbrk' function. */
 #cmakedefine01 HAVE___SBRK
-
-/* prefix where we look for installed files */
-#cmakedefine INSTALL_PREFIX
-
-/* Define to the sub-directory where libtool stores uninstalled libraries. */
-#cmakedefine LT_OBJDIR
 
 /* Always the empty-string on non-windows systems. On windows, should be
    "__declspec(dllexport)". This way, when we compile the dll, we export our

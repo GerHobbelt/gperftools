@@ -129,6 +129,7 @@
 #include "thread_cache_ptr.h"
 
 #include "maybe_emergency_malloc.h"
+#include "testing_portal.h"
 
 #if (defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)) && !defined(WIN32_OVERRIDE_ALLOCATORS)
 # define WIN32_DO_PATCHING 1
@@ -156,8 +157,14 @@ using tcmalloc::Static;
 using tcmalloc::ThreadCache;
 using tcmalloc::ThreadCachePtr;
 
+using tcmalloc::TestingPortal;
+
 DECLARE_double(tcmalloc_release_rate);
 DECLARE_int64(tcmalloc_heap_limit_mb);
+
+#ifndef NO_HEAP_CHECK
+DECLARE_string(heap_check);
+#endif
 
 // Those common architectures are known to be safe w.r.t. aliasing function
 // with "extra" unused args to function with fewer arguments (e.g.
@@ -543,6 +550,85 @@ static void IterateOverRanges(void* arg, MallocExtension::RangeFunction func) {
   }
 }
 
+namespace tcmalloc {
+
+TestingPortal::~TestingPortal() = default;
+
+// implemented in heap-checker.cc
+extern void DoIterateMemoryRegionMap(tcmalloc::FunctionRef<void(const void*)> callback);
+
+class ATTRIBUTE_HIDDEN TestingPortalImpl : public TestingPortal {
+public:
+  ~TestingPortalImpl() override = default;
+
+  bool HaveSystemRelease() override {
+    static bool have = ([] () {
+      size_t actual;
+      auto ptr = TCMalloc_SystemAlloc(kPageSize, &actual, 0);
+      return TCMalloc_SystemRelease(ptr, actual);
+    })();
+    return have;
+  }
+  bool IsDebuggingMalloc() override {
+    return false;
+  }
+  size_t GetPageSize() override {
+    return kPageSize;
+  }
+  size_t GetMinAlign() override {
+    return kMinAlign;
+  }
+  size_t GetMaxSize() override {
+    return kMaxSize;
+  }
+  int64_t& GetSampleParameter() override {
+    return FLAGS_tcmalloc_sample_parameter;
+  }
+  double& GetReleaseRate() override {
+    return FLAGS_tcmalloc_release_rate;
+  }
+  int32_t& GetMaxFreeQueueSize() override {
+    abort();
+  }
+
+  bool HasEmergencyMalloc() override {
+    return kUseEmergencyMalloc;
+  }
+
+  void WithEmergencyMallocEnabled(FunctionRef<void()> body) override {
+#if ENABLE_EMERGENCY_MALLOC
+    StacktraceScope scope;
+    CHECK(scope.IsStacktraceAllowed());
+    body();
+#endif
+  }
+
+  std::string_view GetHeapCheckFlag() override {
+#ifndef NO_HEAP_CHECK
+    return FLAGS_heap_check;
+#else
+    return "";
+#endif
+  }
+  void IterateMemoryRegionMap(FunctionRef<void(const void*)> callback) override {
+#ifndef NO_HEAP_CHECK
+    DoIterateMemoryRegionMap(callback);
+#endif
+  }
+
+  static TestingPortalImpl* Get() {
+    static TestingPortalImpl* ptr = ([] () {
+      static StaticStorage<TestingPortalImpl> storage;
+      return storage.Construct();
+    }());
+    return ptr;
+  }
+};
+
+}  // namespace tcmalloc
+
+using tcmalloc::TestingPortalImpl;
+
 // TCMalloc's support for extra malloc interfaces
 class TCMallocImplementation : public MallocExtension {
  private:
@@ -772,6 +858,12 @@ class TCMallocImplementation : public MallocExtension {
     if (strcmp(name, "tcmalloc.impl.thread_cache_count") == 0) {
       SpinLockHolder h(Static::pageheap_lock());
       *value = ThreadCache::thread_heap_count();
+      return true;
+    }
+
+    if (TestingPortal** portal = TestingPortal::CheckGetPortal(name, value); portal) {
+      *portal = TestingPortalImpl::Get();
+      *value = 1;
       return true;
     }
 
@@ -1114,11 +1206,10 @@ static TCMallocGuard module_enter_exit_hook;
 
 #ifndef TCMALLOC_USING_DEBUGALLOCATION
 
+static tcmalloc::StaticStorage<TCMallocImplementation> malloc_impl_storage;
+
 void SetupMallocExtension() {
-  static struct {
-    alignas(TCMallocImplementation) char memory[sizeof(TCMallocImplementation)];
-  } storage;
-  MallocExtension::Register(new (storage.memory) TCMallocImplementation);
+  MallocExtension::Register(malloc_impl_storage.Construct());
 }
 
 #endif  // TCMALLOC_USING_DEBUGALLOCATION

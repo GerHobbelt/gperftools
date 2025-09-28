@@ -65,9 +65,6 @@
 /* Define to 1 if you have the <dlfcn.h> header file. */
 /* #undef HAVE_DLFCN_H */
 
-/* Define to 1 if the system has the type `Elf32_Versym'. */
-/* #undef HAVE_ELF32_VERSYM */
-
 /* Define to 1 if you have the <execinfo.h> header file. */
 /* #undef HAVE_EXECINFO_H */
 
@@ -83,9 +80,6 @@
 /* Define to 1 if you have the <glob.h> header file. */
 /* #undef HAVE_GLOB_H */
 
-/* Define to 1 if you have the <grp.h> header file. */
-/* #undef HAVE_GRP_H */
-
 /* Define to 1 if you have the <libunwind.h> header file. */
 /* #undef HAVE_LIBUNWIND_H */
 
@@ -95,9 +89,6 @@
 /* Define to 1 if you have the <malloc.h> header file. */
 #define HAVE_MALLOC_H 1
 
-/* Define to 1 if you have the <memory.h> header file. */
-#define HAVE_MEMORY_H 1
-
 /* Define to 1 if you have a working `mmap' system call. */
 /* #undef HAVE_MMAP */
 
@@ -106,9 +97,6 @@
 
 /* define if libc has program_invocation_name */
 /* #undef HAVE_PROGRAM_INVOCATION_NAME */
-
-/* Define to 1 if you have the <pwd.h> header file. */
-/* #undef HAVE_PWD_H */
 
 /* Define to 1 if you have the `sbrk' function. */
 /* #undef HAVE_SBRK */
@@ -124,12 +112,6 @@
 
 /* Define to 1 if you have the <sys/cdefs.h> header file. */
 /* #undef HAVE_SYS_CDEFS_H */
-
-/* Define to 1 if you have the <sys/resource.h> header file. */
-/* #undef HAVE_SYS_RESOURCE_H */
-
-/* Define to 1 if you have the <sys/socket.h> header file. */
-/* #undef HAVE_SYS_SOCKET_H */
 
 /* Define to 1 if you have the <sys/stat.h> header file. */
 #define HAVE_SYS_STAT_H 1
@@ -169,12 +151,6 @@
 
 /* Define to 1 if you have the `__sbrk' function. */
 /* #undef HAVE___SBRK */
-
-/* prefix where we look for installed files */
-/* #undef INSTALL_PREFIX */
-
-/* Define to the sub-directory where libtool stores uninstalled libraries. */
-/* #undef LT_OBJDIR */
 
 /* Always the empty-string on non-windows systems. On windows, should be
    "__declspec(dllexport)". This way, when we compile the dll, we export our

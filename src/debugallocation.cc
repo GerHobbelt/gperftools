@@ -71,6 +71,7 @@
 #include "base/googleinit.h"
 #include "base/logging.h"
 #include "base/spinlock.h"
+#include "base/static_storage.h"
 #include "base/threading.h"
 #include "malloc_hook-inl.h"
 #include "maybe_emergency_malloc.h"
@@ -697,9 +698,9 @@ class MallocBlock {
 
       // We don't want to allocate or deallocate memory here, so we use
       // placement-new.  It's ok that we don't destroy this, since we're
-      // just going to error-exit below anyway.  Union is for alignment.
-      union { void* alignment; char buf[sizeof(SymbolTable)]; } tablebuf;
-      SymbolTable* symbolization_table = new (tablebuf.buf) SymbolTable;
+      // just going to error-exit below anyway.
+      tcmalloc::StaticStorage<SymbolTable> tablebuf;
+      SymbolTable* symbolization_table = tablebuf.Construct();
       for (int i = 0; i < queue_entry.num_deleter_pcs; i++) {
         // Symbolizes the previous address of pc because pc may be in the
         // next function.  This may happen when the function ends with
@@ -1055,6 +1056,13 @@ static inline void DebugDeallocate(void* ptr, int type, size_t given_size) {
   if (ptr)  MallocBlock::FromRawPointer(ptr)->Deallocate(type, given_size);
 }
 
+class ATTRIBUTE_HIDDEN DebugTestingPortal : public TestingPortalImpl {
+public:
+  ~DebugTestingPortal() override = default;
+  bool IsDebuggingMalloc() override { return true; }
+  int32_t& GetMaxFreeQueueSize() override { return FLAGS_max_free_queue_size; }
+};
+
 // ========================================================================= //
 
 // The following functions may be called via MallocExtension::instance()
@@ -1062,6 +1070,16 @@ static inline void DebugDeallocate(void* ptr, int type, size_t given_size) {
 class DebugMallocImplementation : public TCMallocImplementation {
  public:
   virtual bool GetNumericProperty(const char* name, size_t* value) {
+    if (TestingPortal** portal = TestingPortal::CheckGetPortal(name, value); portal) {
+      static DebugTestingPortal* ptr = ([] () {
+        static tcmalloc::StaticStorage<DebugTestingPortal> storage;
+        return storage.Construct();
+      })();
+      *portal = ptr;
+      *value = 1;
+      return true;
+    }
+
     bool result = TCMallocImplementation::GetNumericProperty(name, value);
     if (result && (strcmp(name, "generic.current_allocated_bytes") == 0)) {
       // Subtract bytes kept in the free queue
@@ -1158,11 +1176,10 @@ class DebugMallocImplementation : public TCMallocImplementation {
 
 };
 
+static tcmalloc::StaticStorage<DebugMallocImplementation> debug_malloc_impl_storage;
+
 void SetupMallocExtension() {
-  static struct {
-    alignas(DebugMallocImplementation) char memory[sizeof(DebugMallocImplementation)];
-  } storage;
-  MallocExtension::Register(new (storage.memory) DebugMallocImplementation);
+  MallocExtension::Register(debug_malloc_impl_storage.Construct());
 }
 
 REGISTER_MODULE_DESTRUCTOR(debugallocation, {

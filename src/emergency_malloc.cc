@@ -33,6 +33,8 @@
 
 #include "emergency_malloc.h"
 
+#include <tuple>
+
 #include <errno.h>                      // for ENOMEM, errno
 #include <string.h>                     // for memset
 
@@ -40,7 +42,9 @@
 #include "base/logging.h"
 #include "base/low_level_alloc.h"
 #include "base/spinlock.h"
+#include "base/static_storage.h"
 #include "internal_logging.h"
+#include "mmap_hook.h"
 #include "thread_cache_ptr.h"
 
 namespace tcmalloc {
@@ -54,7 +58,7 @@ static LowLevelAlloc::Arena *emergency_arena;
 
 class EmergencyArenaPagesAllocator : public LowLevelAlloc::PagesAllocator {
   ~EmergencyArenaPagesAllocator() {}
-  void *MapPages(int32_t flags, size_t size) {
+  void *MapPages(size_t size) override {
     char *new_end = emergency_arena_end + size;
     if (new_end > emergency_arena_start + kEmergencyArenaSize) {
       RAW_LOG(FATAL, "Unable to allocate %zu bytes in emergency zone.", size);
@@ -63,39 +67,36 @@ class EmergencyArenaPagesAllocator : public LowLevelAlloc::PagesAllocator {
     emergency_arena_end = new_end;
     return static_cast<void *>(rv);
   }
-  void UnMapPages(int32_t flags, void *addr, size_t size) {
+  void UnMapPages(void *addr, size_t size) override {
     RAW_LOG(FATAL, "UnMapPages is not implemented for emergency arena");
   }
 };
 
 static void InitEmergencyMalloc(void) {
-  constexpr int32_t flags = LowLevelAlloc::kAsyncSignalSafe;
-
-  void *arena = LowLevelAlloc::GetDefaultPagesAllocator()->MapPages(flags, kEmergencyArenaSize * 2);
+  auto [arena, success] = DirectAnonMMap(false, kEmergencyArenaSize * 2);
+  CHECK_CONDITION(success);
 
   uintptr_t arena_ptr = reinterpret_cast<uintptr_t>(arena);
   uintptr_t ptr = (arena_ptr + kEmergencyArenaSize - 1) & ~(kEmergencyArenaSize-1);
 
   emergency_arena_end = emergency_arena_start = reinterpret_cast<char *>(ptr);
 
-  static struct alignas(alignof(EmergencyArenaPagesAllocator)) {
-    uint8_t bytes[sizeof(EmergencyArenaPagesAllocator)];
-  } pages_allocator_place;
+  static StaticStorage<EmergencyArenaPagesAllocator> pages_allocator_place;
+  EmergencyArenaPagesAllocator* allocator = pages_allocator_place.Construct();
 
-  EmergencyArenaPagesAllocator *allocator = new (&pages_allocator_place) EmergencyArenaPagesAllocator();
-  emergency_arena = LowLevelAlloc::NewArenaWithCustomAlloc(0, LowLevelAlloc::DefaultArena(), allocator);
+  emergency_arena = LowLevelAlloc::NewArenaWithCustomAlloc(nullptr, allocator);
 
   emergency_arena_start_shifted = reinterpret_cast<uintptr_t>(emergency_arena_start) >> kEmergencyArenaShift;
 
   uintptr_t head_unmap_size = ptr - arena_ptr;
   CHECK_CONDITION(head_unmap_size < kEmergencyArenaSize);
   if (head_unmap_size != 0) {
-    LowLevelAlloc::GetDefaultPagesAllocator()->UnMapPages(flags, arena, ptr - arena_ptr);
+    DirectMUnMap(false, arena, ptr - arena_ptr);
   }
 
   uintptr_t tail_unmap_size = kEmergencyArenaSize - head_unmap_size;
   void *tail_start = reinterpret_cast<void *>(arena_ptr + head_unmap_size + kEmergencyArenaSize);
-  LowLevelAlloc::GetDefaultPagesAllocator()->UnMapPages(flags, tail_start, tail_unmap_size);
+  DirectMUnMap(false, tail_start, tail_unmap_size);
 }
 
 ATTRIBUTE_HIDDEN void *EmergencyMalloc(size_t size) {
