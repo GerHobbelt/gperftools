@@ -210,8 +210,6 @@ AC_MSG_RESULT($ac_cv___attribute__aligned_fn)
 
 
 # TODO(csilvers): we could remove a lot when WITH_CPU_PROFILER etc is "no".
-AC_CHECK_TYPES([struct mallinfo],,, [#include <malloc.h>])
-AC_CHECK_TYPES([struct mallinfo2],,, [#include <malloc.h>])
 AC_CHECK_FUNCS(sbrk)            # for tcmalloc to get memory
 AC_CHECK_FUNCS(geteuid)         # for turning off services when run as root
 AC_CHECK_HEADERS(features.h)    # for vdso_support.h, __GLIBC__ macros
@@ -242,8 +240,7 @@ AC_SUBST(REGEX_LIBS)
 
 # We override a lot of memory allocation routines, not all of which are
 # standard.  For those the system doesn't declare, we'll declare ourselves.
-AC_CHECK_DECLS([cfree,
-                posix_memalign,
+AC_CHECK_DECLS([posix_memalign,
                 memalign,
                 valloc,
                 pvalloc],,,
@@ -251,18 +248,6 @@ AC_CHECK_DECLS([cfree,
                 #define _QNX_SOURCE 1
                 #include <stdlib.h>
                 #include <malloc.h>])
-
-if test "$ac_cv_type_struct_mallinfo" = yes; then
-  AC_SUBST(ac_cv_have_struct_mallinfo, 1)   # gperftools/tcmalloc.h needs this
-else
-  AC_SUBST(ac_cv_have_struct_mallinfo, 0)
-fi
-
-if test "$ac_cv_type_struct_mallinfo2" = yes; then
-  AC_SUBST(ac_cv_have_struct_mallinfo2, 1)   # gperftools/tcmalloc.h needs this
-else
-  AC_SUBST(ac_cv_have_struct_mallinfo2, 0)
-fi
 
 # We hardcode HAVE_MMAP to 1. There are no interesting systems anymore
 # without functional mmap. And our windows (except mingw) builds
@@ -293,30 +278,23 @@ AM_CONDITIONAL(ENABLE_STATIC, test "$enable_static" = yes)
 
 # We want to link in libunwind if it is enabled and exists.
 UNWIND_LIBS=
+UNWIND_PC_DEP=
 if test "$enable_libunwind" = yes; then
   AC_CHECK_HEADERS([libunwind.h],
                    [AC_CHECK_LIB(unwind, backtrace,
                      [UNWIND_LIBS=-lunwind
+                      UNWIND_PC_DEP=libunwind
                       AC_DEFINE([USE_LIBUNWIND], [1], [libunwind.h was found and is working])
                       will_use_libunwind=yes])])
 fi
 AC_SUBST(UNWIND_LIBS)
+AC_SUBST(UNWIND_PC_DEP)
 
 AC_ARG_ENABLE(frame_pointers,
               AS_HELP_STRING([--enable-frame-pointers],
                              [Add -fno-omit-frame-pointer to compile flags]),
 	      , enable_frame_pointers=no)
 AM_CONDITIONAL(ENABLE_FRAME_POINTERS, test "$enable_frame_pointers" = yes)
-
-AC_ARG_ENABLE([deprecated-pprof],
-              [AS_HELP_STRING([--disable-deprecated-pprof],
-                [do not install old deprecated and unmaintained bundled pprof
-(see github.com/google/pprof for supported version)])],
-              [enable_pprof="$enableval"],
-              [enable_pprof=yes])
-
-AM_CONDITIONAL(INSTALL_PPROF,
-               [test "x$enable_pprof" = xyes])
 
 AC_ARG_ENABLE([dynamic-sized-delete-support],
               [AS_HELP_STRING([--enable-dynamic-sized-delete-support],
@@ -480,7 +458,7 @@ AH_TOP([
 # Also, manually mark systems where we have to be careful how early
 # we run pthreads.  TODO(csilvers): turn this into an autoconf check.
 AH_BOTTOM([
-#ifdef WIN32
+#ifdef _WIN32
 // TODO(csilvers): include windows/port.h in every relevant source file instead?
 #include "windows/port.h"
 #endif
@@ -536,10 +514,11 @@ AS_IF([test "x$enable_aggressive_decommit_by_default" = xyes],
                  1,
                  [enable aggressive decommit by default])])
 
+AC_PATH_PROG(PPROF_PATH, pprof)
+AM_CONDITIONAL(SKIP_PPROF_TESTS, [test "x$PPROF_PATH" = "x"])
+AS_IF([test "x$PPROF_PATH" = "x"],
+      [AC_MSG_WARN([pprof tool not found. Will skip several unit tests that need it. Install via go install github.com/google/pprof@latest then add \$HOME/go/bin to PATH])])
+
 # Write generated configuration file
-# NOTE: vsprojects/gperftools/tcmalloc.h is checked in
-AC_CONFIG_FILES([Makefile
-                 src/gperftools/tcmalloc.h
-                 vsprojects/include/gperftools/tcmalloc.h:src/gperftools/tcmalloc.h.in
-                 ])
+AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

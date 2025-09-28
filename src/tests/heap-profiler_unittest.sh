@@ -44,7 +44,7 @@
 # We expect BINDIR and PPROF_PATH to be set in the environment.
 # If not, we set them to some reasonable values
 BINDIR="${BINDIR:-.}"
-PPROF_PATH="${PPROF_PATH:-$BINDIR/src/pprof}"
+PPROF_PATH="${PPROF_PATH:-pprof}"
 
 if [ "x$1" = "x-h" -o "x$1" = "x--help" ]; then
   echo "USAGE: $0 [unittest dir] [path to pprof]"
@@ -76,10 +76,10 @@ VerifyMemFunction() {
   if [ $# = 2 ]; then
     [ -f "$1" ] || { echo "Profile not found: $1"; exit 1; }
     [ -f "$2" ] || { echo "Profile not found: $2"; exit 1; }
-    $PPROF --base="$1" $exec "$2" >"$TEST_TMPDIR/output.pprof" 2>&1
+    $PPROF --text --base="$1" $exec "$2" >"$TEST_TMPDIR/output.pprof" 2>&1
   else
     [ -f "$1" ] || { echo "Profile not found: $1"; exit 1; }
-    $PPROF $exec "$1" >"$TEST_TMPDIR/output.pprof" 2>&1
+    $PPROF --text $exec "$1" >"$TEST_TMPDIR/output.pprof" 2>&1
   fi
 
   cat "$TEST_TMPDIR/output.pprof" \

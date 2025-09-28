@@ -696,10 +696,11 @@ class MallocBlock {
       TracePrintf(STDERR_FILENO, "Deleted by thread %zx\n",
                   queue_entry.deleter_threadid);
 
-      tcmalloc::DumpStackTraceToStderr(queue_entry.deleter_pcs, queue_entry.num_deleter_pcs,
-                                       FLAGS_symbolize_stacktrace,
-                                       "    @ ");
-
+      ThreadCachePtr::WithStacktraceScope([&] (bool stacktrace_allowed) {
+        tcmalloc::DumpStackTraceToStderr(queue_entry.deleter_pcs, queue_entry.num_deleter_pcs,
+                                         FLAGS_symbolize_stacktrace,
+                                         "    @ ");
+      });
     } else {
       RAW_LOG(ERROR,
               "Skipping the printing of the deleter's stack!  Its stack was "
@@ -1116,6 +1117,9 @@ class DebugMallocImplementation : public TCMallocImplementation {
     if (p) {
       RAW_CHECK(GetOwnership(p) != MallocExtension::kNotOwned,
                 "ptr not allocated by tcmalloc");
+      if (tcmalloc::IsEmergencyPtr(p)) {
+        return tcmalloc::EmergencyAllocatedSize(p);
+      }
       return MallocBlock::FromRawPointer(p)->actual_data_size(p);
     }
     return 0;
@@ -1148,6 +1152,10 @@ class DebugMallocImplementation : public TCMallocImplementation {
     MallocExtension::Ownership rv = TCMallocImplementation::GetOwnership(p);
     if (rv != MallocExtension::kOwned) {
       return rv;
+    }
+
+    if (tcmalloc::IsEmergencyPtr(p)) {
+      return kOwned;
     }
 
     const MallocBlock* mb = MallocBlock::FromRawPointer(p);

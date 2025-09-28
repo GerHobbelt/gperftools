@@ -79,7 +79,6 @@
 //         or allocated.  If free, it is in one of pageheap's freelist.
 //
 // TODO: Bias reclamation to larger addresses
-// TODO: implement mallinfo/mallopt
 // TODO: Better testing
 //
 // 9/28/2003 (new page-level allocator replaces ptmalloc2):
@@ -213,11 +212,11 @@ extern "C" {
       ATTRIBUTE_SECTION(google_malloc);
   int tc_mallopt(int cmd, int value) PERFTOOLS_NOTHROW
       ATTRIBUTE_SECTION(google_malloc);
-#ifdef HAVE_STRUCT_MALLINFO
+#if GPERFTOOLS_HAS_MALLINFO
   struct mallinfo tc_mallinfo(void) PERFTOOLS_NOTHROW
       ATTRIBUTE_SECTION(google_malloc);
 #endif
-#ifdef HAVE_STRUCT_MALLINFO2
+#ifdef GPERFTOOLS_HAS_MALLINFO2
   struct mallinfo2 tc_mallinfo2(void) PERFTOOLS_NOTHROW
       ATTRIBUTE_SECTION(google_malloc);
 #endif
@@ -301,6 +300,9 @@ ATTRIBUTE_NOINLINE void InvalidFree(void* ptr) {
 }
 
 size_t InvalidGetAllocatedSize(const void* ptr) {
+  if (tcmalloc::IsEmergencyPtr(ptr)) {
+    return tcmalloc::EmergencyAllocatedSize(ptr);
+  }
   Log(kCrash, __FILE__, __LINE__,
       "Attempt to get the size of an invalid pointer", ptr);
   return 0;
@@ -579,6 +581,10 @@ public:
     return kUseEmergencyMalloc;
   }
 
+  bool IsEmergencyPtr(void* ptr) override {
+    return tcmalloc::IsEmergencyPtr(ptr);
+  }
+
   void WithEmergencyMallocEnabled(FunctionRef<void()> body) override {
     auto body_adaptor = [body] (bool stacktrace_allowed) {
       CHECK(stacktrace_allowed);
@@ -838,6 +844,11 @@ class TCMallocImplementation : public MallocExtension {
       return true;
     }
 
+    if (strcmp(name, "tcmalloc.sample_parameter") == 0) {
+      *value = FLAGS_tcmalloc_sample_parameter;
+      return true;
+    }
+
     if (TestingPortal** portal = TestingPortal::CheckGetPortal(name, value); portal) {
       *portal = TestingPortalImpl::Get();
       *value = 1;
@@ -870,6 +881,15 @@ class TCMallocImplementation : public MallocExtension {
     if (strcmp(name, "tcmalloc.heap_limit_mb") == 0) {
       SpinLockHolder l(Static::pageheap_lock());
       FLAGS_tcmalloc_heap_limit_mb = value;
+      return true;
+    }
+
+    if (strcmp(name, "tcmalloc.sample_parameter") == 0) {
+      FLAGS_tcmalloc_sample_parameter = value;
+      // By clearing current thread's cache we force next allocations
+      // to read freshly updated sample parameter. This is only going
+      // to affect current thread, but this is better than nothing.
+      MallocExtension::instance()->MarkThreadIdle();
       return true;
     }
 
@@ -963,7 +983,10 @@ class TCMallocImplementation : public MallocExtension {
       return kOwned;
     }
     const Span *span = Static::pageheap()->GetDescriptor(p);
-    return span ? kOwned : kNotOwned;
+    if (span) {
+      return kOwned;
+    }
+    return tcmalloc::IsEmergencyPtr(ptr) ? kOwned : kNotOwned;
   }
 
   virtual void GetFreeListSizes(std::vector<MallocExtension::FreeListInfo>* v) {
@@ -1722,7 +1745,7 @@ inline int do_mallopt(int cmd, int value) {
   return 1;     // Indicates error
 }
 
-#if defined(HAVE_STRUCT_MALLINFO) || defined(HAVE_STRUCT_MALLINFO2)
+#if GPERFTOOLS_HAS_MALLINFO2 || GPERFTOOLS_HAS_MALLINFO
 template <typename Mallinfo>
 inline Mallinfo do_mallinfo() {
   TCMallocStats stats;
@@ -1752,7 +1775,7 @@ inline Mallinfo do_mallinfo() {
 
   return info;
 }
-#endif  // HAVE_STRUCT_MALLINFO || HAVE_STRUCT_MALLINFO2
+#endif  // GPERFTOOLS_HAS_MALLINFO{,2}
 
 }  // end unnamed namespace
 
@@ -2266,13 +2289,13 @@ extern "C" PERFTOOLS_DLL_DECL int tc_mallopt(int cmd, int value) PERFTOOLS_NOTHR
   return do_mallopt(cmd, value);
 }
 
-#ifdef HAVE_STRUCT_MALLINFO
+#if GPERFTOOLS_HAS_MALLINFO
 extern "C" PERFTOOLS_DLL_DECL struct mallinfo tc_mallinfo(void) PERFTOOLS_NOTHROW {
   return do_mallinfo<struct mallinfo>();
 }
 #endif
 
-#ifdef HAVE_STRUCT_MALLINFO2
+#if GPERFTOOLS_HAS_MALLINFO2
 extern "C" PERFTOOLS_DLL_DECL struct mallinfo2 tc_mallinfo2(void) PERFTOOLS_NOTHROW {
   return do_mallinfo<struct mallinfo2>();
 }

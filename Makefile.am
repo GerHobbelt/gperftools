@@ -63,10 +63,7 @@ perftoolsincludedir = $(includedir)/gperftools
 # The .h files you want to install (that is, .h files that people
 # who install this package can include in their own applications.)
 # We'll add to this later, on a library-by-library basis
-perftoolsinclude_HEADERS =
-# tcmalloc.h is a special case, because it's a .h.in file
-nodist_perftoolsinclude_HEADERS = src/gperftools/tcmalloc.h
-noinst_HEADERS = src/gperftools/tcmalloc.h.in
+perftoolsinclude_HEADERS = src/gperftools/tcmalloc.h
 
 # This is for HTML and other documentation you want to install.  Add
 # your documentation files (in doc/) in addition to these top-level
@@ -228,31 +225,6 @@ check_address_test_LDADD = libcommon.la libgtest.la
 
 ### Documentation
 dist_doc_DATA +=
-
-endif WITH_STACK_TRACE
-
-### ------- pprof
-
-# If we are not compiling with stacktrace support, pprof is worthless
-if WITH_STACK_TRACE
-
-bin_SCRIPTS = pprof-symbolize
-
-pprof-symbolize : $(top_srcdir)/src/pprof
-	cp -p $(top_srcdir)/src/pprof $@
-
-### Unittests
-
-# Let unittests find pprof if they need to run it
-TESTS_ENVIRONMENT += PPROF_PATH=$(top_srcdir)/src/pprof
-
-if INSTALL_PPROF
-bin_SCRIPTS += src/pprof
-dist_man_MANS = docs/pprof.1
-dist_doc_DATA += docs/pprof_remote_servers.html
-endif INSTALL_PPROF
-
-### Documentation
 
 endif WITH_STACK_TRACE
 
@@ -576,7 +548,6 @@ endif WITH_STACK_TRACE
 
 endif WITH_DEBUGALLOC
 
-if !MINGW
 noinst_LTLIBRARIES += librun_benchmark.la
 librun_benchmark_la_SOURCES = \
 	benchmark/run_benchmark.cc
@@ -595,6 +566,18 @@ malloc_bench_shared_SOURCES = benchmark/malloc_bench.cc
 malloc_bench_shared_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
 malloc_bench_shared_LDADD = librun_benchmark.la libtcmalloc_minimal.la
 
+binary_trees_SOURCES = benchmark/binary_trees.cc
+binary_trees_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
+if ENABLE_STATIC
+binary_trees_LDFLAGS += -static
+endif ENABLE_STATIC
+binary_trees_LDADD = libtcmalloc_minimal.la
+
+binary_trees_shared_SOURCES = benchmark/binary_trees.cc
+binary_trees_shared_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
+binary_trees_shared_LDADD = libtcmalloc_minimal.la
+
+if !MINGW
 if WITH_HEAP_PROFILER_OR_CHECKER
 
 noinst_PROGRAMS += malloc_bench_shared_full
@@ -608,17 +591,6 @@ unwind_bench_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
 unwind_bench_LDADD = librun_benchmark.la libtcmalloc.la
 
 endif WITH_HEAP_PROFILER_OR_CHECKER
-
-binary_trees_SOURCES = benchmark/binary_trees.cc
-binary_trees_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
-if ENABLE_STATIC
-binary_trees_LDFLAGS += -static
-endif ENABLE_STATIC
-binary_trees_LDADD = libtcmalloc_minimal.la
-
-binary_trees_shared_SOURCES = benchmark/binary_trees.cc
-binary_trees_shared_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
-binary_trees_shared_LDADD = libtcmalloc_minimal.la
 endif !MINGW
 
 ### ------- tcmalloc (thread-caching malloc + heap profiler)
@@ -713,16 +685,19 @@ heap_checker_stub_test_SOURCES = src/tests/heap-checker-stub-test.cc
 heap_checker_stub_test_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
 heap_checker_stub_test_LDADD = libtcmalloc.la
 
+if !SKIP_PPROF_TESTS
 TESTS += sampling_test
 sampling_test_SOURCES = src/tests/sampling_test.cc
 sampling_test_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
-sampling_test_CPPFLAGS = $(AM_CPPFLAGS) "-DPPROF_PATH=$(top_srcdir)/src/pprof"
+sampling_test_CPPFLAGS = $(gtest_CPPFLAGS)
 sampling_test_LDADD = libtcmalloc.la $(REGEX_LIBS)
+endif !SKIP_PPROF_TESTS
 
 endif WITH_HEAP_PROFILER_OR_CHECKER
 
 if WITH_HEAP_PROFILER
 
+if !SKIP_PPROF_TESTS
 TESTS += heap-profiler_unittest.sh$(EXEEXT)
 heap_profiler_unittest_sh_SOURCES = src/tests/heap-profiler_unittest.sh
 noinst_SCRIPTS += $(heap_profiler_unittest_sh_SOURCES)
@@ -736,6 +711,7 @@ noinst_PROGRAMS += heap-profiler_unittest
 heap_profiler_unittest_SOURCES = src/tests/heap-profiler_unittest.cc
 heap_profiler_unittest_LDFLAGS = $(TCMALLOC_FLAGS) $(AM_LDFLAGS)
 heap_profiler_unittest_LDADD = libtcmalloc.la
+endif !SKIP_PPROF_TESTS
 
 endif WITH_HEAP_PROFILER
 
@@ -763,17 +739,20 @@ tcmalloc_debug_unittest_LDFLAGS = $(tcmalloc_unittest_LDFLAGS)
 tcmalloc_debug_unittest_CPPFLAGS = $(gtest_CPPFLAGS)
 tcmalloc_debug_unittest_LDADD = libtcmalloc_debug.la libgtest.la
 
+if !SKIP_PPROF_TESTS
 TESTS += sampling_debug_test
 sampling_debug_test_SOURCES = $(sampling_test_SOURCES)
 sampling_debug_test_CXXFLAGS = $(sampling_test_CXXFLAGS)
 sampling_debug_test_CPPFLAGS = $(sampling_test_CPPFLAGS)
 sampling_debug_test_LDFLAGS = $(sampling_test_LDFLAGS)
 sampling_debug_test_LDADD = libtcmalloc_debug.la $(REGEX_LIBS)
+endif !SKIP_PPROF_TESTS
 
 endif WITH_HEAP_PROFILER_OR_CHECKER
 
 if WITH_HEAP_PROFILER
 
+if !SKIP_PPROF_TESTS
 TESTS += heap-profiler_debug_unittest.sh$(EXEEXT)
 heap_profiler_debug_unittest_sh_SOURCES = src/tests/heap-profiler_unittest.sh
 heap-profiler_debug_unittest.sh$(EXEEXT): $(top_srcdir)/$(heap_profiler_unittest_sh_SOURCES) \
@@ -787,6 +766,7 @@ heap_profiler_debug_unittest_SOURCES = $(heap_profiler_unittest_SOURCES)
 heap_profiler_debug_unittest_CXXFLAGS = $(heap_profiler_unittest_CXXFLAGS)
 heap_profiler_debug_unittest_LDFLAGS = $(heap_profiler_unittest_LDFLAGS)
 heap_profiler_debug_unittest_LDADD = libtcmalloc_debug.la
+endif !SKIP_PPROF_TESTS
 
 endif WITH_HEAP_PROFILER
 
@@ -824,6 +804,7 @@ profile_handler_unittest_SOURCES = src/tests/profile-handler_unittest.cc src/pro
 profile_handler_unittest_CPPFLAGS = $(gtest_CPPFLAGS)
 profile_handler_unittest_LDADD = libstacktrace.la libcommon.la libgtest.la
 
+if !SKIP_PPROF_TESTS
 TESTS += profiler_unittest.sh$(EXEEXT)
 profiler_unittest_sh_SOURCES = src/tests/profiler_unittest.sh
 noinst_SCRIPTS += $(profiler_unittest_sh_SOURCES)
@@ -854,7 +835,7 @@ profiler4_unittest_CXXFLAGS = -g $(AM_CXXFLAGS)
 profiler4_unittest_LDADD = -lstacktrace -lprofiler
 # We depend on -lprofiler but haven't yet said how to build it.  Do so now.
 profiler4_unittest_DEPENDENCIES = libprofiler.la
-
+endif !SKIP_PPROF_TESTS
 
 ### Documentation
 dist_doc_DATA += docs/cpuprofile.html \
@@ -932,20 +913,33 @@ libtcmalloc.pc: Makefile
 	echo 'Version: $(VERSION)' >> "$@".tmp
 	echo 'Description: Performance tools for C++' >> "$@".tmp
 	echo 'URL: https://github.com/gperftools/gperftools' >> "$@".tmp
-	echo 'Requires:' >> "$@".tmp
+	echo 'Requires: $(UNWIND_PC_DEP)' >> "$@".tmp
 	echo 'Libs: -L$${libdir} -ltcmalloc' >> "$@".tmp
 	echo 'Libs.private: $(PTHREAD_CFLAGS) $(PTHREAD_LIBS)' >> "$@".tmp
 	echo 'Cflags: -I$${includedir}' >> "$@".tmp
 	mv -f "$@".tmp "$@"
 
 libtcmalloc_minimal.pc: libtcmalloc.pc
-	cat libtcmalloc.pc | sed s/-ltcmalloc/-ltcmalloc_minimal/ > "$@"
+	echo 'prefix=$(prefix)' > "$@".tmp
+	echo 'exec_prefix='`echo '$(exec_prefix)' | sed 's@^$(prefix)@$${prefix}@'` >> "$@".tmp
+	echo 'libdir='`echo '$(libdir)' | sed 's@^$(exec_prefix)@$${exec_prefix}@'` >> "$@".tmp
+	echo 'includedir='`echo '$(includedir)' | sed 's@^$(prefix)@$${prefix}@'` >> "$@".tmp
+	echo '' >> "$@".tmp
+	echo 'Name: $(PACKAGE)' >> "$@".tmp
+	echo 'Version: $(VERSION)' >> "$@".tmp
+	echo 'Description: Performance tools for C++' >> "$@".tmp
+	echo 'URL: https://github.com/gperftools/gperftools' >> "$@".tmp
+	echo 'Requires:' >> "$@".tmp
+	echo 'Libs: -L$${libdir} -ltcmalloc_minimal' >> "$@".tmp
+	echo 'Libs.private: $(PTHREAD_CFLAGS) $(PTHREAD_LIBS)' >> "$@".tmp
+	echo 'Cflags: -I$${includedir}' >> "$@".tmp
+	mv -f "$@".tmp "$@"
 
 libtcmalloc_debug.pc: libtcmalloc.pc
 	cat libtcmalloc.pc | sed s/-ltcmalloc/-ltcmalloc_debug/ > "$@"
 
-libtcmalloc_minimal_debug.pc: libtcmalloc.pc
-	cat libtcmalloc.pc | sed s/-ltcmalloc/-ltcmalloc_minimal_debug/ > "$@"
+libtcmalloc_minimal_debug.pc: libtcmalloc_minimal.pc
+	cat libtcmalloc_minimal.pc | sed s/-ltcmalloc_minimal/-ltcmalloc_minimal_debug/ > "$@"
 
 libprofiler.pc: libtcmalloc.pc
 	cat libtcmalloc.pc | sed s/-ltcmalloc/-lprofiler/ > "$@"
@@ -966,10 +960,14 @@ EXTRA_DIST = $(SCRIPTS) \
              $(top_srcdir)/benchmark/*h \
              $(top_srcdir)/src/tests/*h \
              $(top_srcdir)/src/windows/*h $(top_srcdir)/src/gperftools/*h \
-             CMakeLists.txt cmake
+             CMakeLists.txt cmake \
+             generic-config/config.h .bazelrc BUILD MODULE.bazel
 
 # Windows wants write permission to .vcxproj files and maybe even sln files.
 dist-hook: $(top_distdir)/ChangeLog
 	test -e "$(distdir)/vsprojects" \
 	   && chmod -R u+w $(distdir)/*.sln $(distdir)/vsprojects/
-	rm -f $(distdir)/src/config.h $(distdir)/src/gperftools/tcmalloc.h
+	rm -rf $(distdir)/vendor/googletest/googletest/src/.deps
+	rm -rf $(distdir)/vendor/libbacktrace/.deps
+	rm -rf $(distdir)/vendor/libbacktrace-integration/.deps
+	rm -f $(distdir)/src/config.h

@@ -15,7 +15,17 @@ jobs:
         uses: actions/checkout@v4
       - name: Install dependencies
         run: |
+          sudo apt update
           sudo apt install automake autoconf libtool build-essential patch perl libc-bin libunwind-dev
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Install pprof
+        run: |
+          go install github.com/google/pprof@latest
+          echo "PATH=$HOME/go/bin:$PATH" >> $GITHUB_ENV
+      - run: echo GPERFTOOLS_ENSURE_PACKAGE_VERSION=1 >> $GITHUB_ENV
       - name: Build and test
         run: |
           ./autogen.sh
@@ -40,13 +50,24 @@ jobs:
         uses: actions/checkout@v4
       - name: Install dependencies
         run: |
+          sudo apt update
           sudo apt install automake autoconf libtool build-essential patch perl libc-bin g++-multilib
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Install pprof
+        run: |
+          go install github.com/google/pprof@latest
+          echo "PATH=$HOME/go/bin:$PATH" >> $GITHUB_ENV
       - name: Configure ccache action
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ github.job }}-${{ matrix.os }}
       - name: Add ccache to PATH
         run: echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
+      # when testing autotools-based build ensure that we check PACKAGE_VERSION matches versions in tcmalloc.h
+      - run: echo GPERFTOOLS_ENSURE_PACKAGE_VERSION=1 >> $GITHUB_ENV
       - name: Build and test
         # GNU/Linux i386 currently fails with libgcc backtracer due to wrong unwind info in memcpy-ia32.S. So we force frame pointers.
         run: |
@@ -81,12 +102,26 @@ jobs:
           key: ${{ github.job }}-${{ matrix.os }}-${{ matrix.build_type }}
       - name: Add ccache to PATH
         run: echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Install pprof
+        run: |
+          go install github.com/google/pprof@latest
+          echo "PATH=$HOME/go/bin:$PATH" >> $GITHUB_ENV
+          PATH=$HOME/go/bin:$PATH which -a pprof
+      - name: mkdir build/
+        run: cmake -E make_directory ${{runner.workspace}}/build
       - name: cmake setup
-        run: cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -G Ninja -S . -B build
+        working-directory: ${{runner.workspace}}/build
+        run: cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -G Ninja $GITHUB_WORKSPACE
       - name: cmake build
-        run: ninja -C build -v
+        working-directory: ${{runner.workspace}}/build
+        run: ninja -v
       - name: test
-        run: ctest -j12 --test-dir build || ctest -j12 --test-dir build --rerun-failed
+        working-directory: ${{runner.workspace}}/build
+        run: ctest -j12 --test-dir . || ctest -j12 --test-dir . --rerun-failed
       - name: Upload Test Logs
         uses: actions/upload-artifact@v4
         if: ${{ always() }}
@@ -94,7 +129,7 @@ jobs:
           name: test-logs-${{ github.job }}-${{ matrix.os }}-${{ matrix.build_type }}
           retention-days: 7
           path: |
-            build/Testing/Temporary/LastTest.log
+            ${{runner.workspace}}/build/Testing/Temporary/LastTest.log
   test-cmake-windows:
     strategy:
       matrix:
@@ -105,15 +140,22 @@ jobs:
       - name: Clone
         uses: actions/checkout@v4
       - uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: mkdir build/
+        run: cmake -E make_directory ${{runner.workspace}}/build
       - name: cmake setup
+        working-directory: ${{runner.workspace}}/build
+        shell: bash
         run: |
-          ruby .github/workflows/scripts/msvc-env.rb cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -G Ninja -DGPERFTOOLS_BUILD_HEAP_PROFILER=OFF -Dgperftools_build_minimal=ON -S . -B build
+          ruby $GITHUB_WORKSPACE/.github/workflows/scripts/msvc-env.rb cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -G Ninja -DGPERFTOOLS_BUILD_HEAP_PROFILER=OFF -Dgperftools_build_minimal=ON $GITHUB_WORKSPACE
       - name: cmake build
-        run: ruby .github/workflows/scripts/msvc-env.rb ninja -C build -v
+        working-directory: ${{runner.workspace}}/build
+        shell: bash
+        run: ruby $GITHUB_WORKSPACE/.github/workflows/scripts/msvc-env.rb ninja -v
       - name: test
+        working-directory: ${{runner.workspace}}/build
         env:
           CTEST_PARALLEL_LEVEL: 12
-        run: ninja -C build -v test
+        run: ninja -v test
       - name: Upload Test Logs
         uses: actions/upload-artifact@v4
         if: ${{ always() }}
@@ -121,4 +163,4 @@ jobs:
           name: test-logs-${{ github.job }}-${{ matrix.os }}-${{ matrix.build_type }}
           retention-days: 7
           path: |
-            build/Testing/Temporary/LastTest.log
+            ${{runner.workspace}}/build/Testing/Temporary/LastTest.log

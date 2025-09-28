@@ -23,10 +23,6 @@
    don't. */
 #cmakedefine01 HAVE_DECL_BACKTRACE
 
-/* Define to 1 if you have the declaration of `cfree', and to 0 if you don't.
-   */
-#cmakedefine01 HAVE_DECL_CFREE
-
 /* Define to 1 if you have the declaration of `memalign', and to 0 if you
    don't. */
 #cmakedefine01 HAVE_DECL_MEMALIGN
@@ -142,7 +138,7 @@
    functions/classes. It's safe to define this here because config.h is only
    used internally, to compile the DLL, and every DLL source file #includes
    "config.h" before anything else. */
-#if defined(WIN32)
+#if defined(_WIN32)
 #ifndef PERFTOOLS_DLL_DECL
 # define PERFTOOLS_IS_A_DLL  1
 # define PERFTOOLS_DLL_DECL  __declspec(dllexport)
@@ -169,9 +165,9 @@
 # define __STDC_FORMAT_MACROS 1
 #endif
 
-#ifdef WIN32
+#ifdef _WIN32
 // TODO(csilvers): include windows/port.h in every relevant source file instead?
 #include "windows/port.h"
-#endif  /* WIN32 */
+#endif  /* _WIN32 */
 
 #endif  /* GPERFTOOLS_CONFIG_H_ */
