@@ -45,9 +45,7 @@
 # define GLOB_NOMATCH 0
 #endif
 #endif
-#ifdef HAVE_INTTYPES_H
 #include <inttypes.h> // for PRIxPTR
-#endif
 #ifdef HAVE_POLL_H
 #include <poll.h>
 #endif
@@ -374,6 +372,7 @@ int HeapProfileTable::FillOrderedProfile(char buf[], int size) const {
   // Dump the mmap list first.
   if (profile_mmap_) {
     BufferArgs buffer(buf, bucket_length, size);
+    MemoryRegionMap::LockHolder holder{};
     MemoryRegionMap::IterateBuckets<BufferArgs*>(DumpBucketIterator, &buffer);
     bucket_length = buffer.buflen;
   }

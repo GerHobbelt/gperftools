@@ -23,6 +23,7 @@
 /binary_trees.exe
 /binary_trees_shared
 /binary_trees_shared.exe
+/check_address_unittest
 /compile
 /config.guess
 /config.log
@@ -80,6 +81,7 @@
 /memalign_debug_unittest
 /memalign_unittest
 /missing
+/mmap_hook_test
 /packed_cache_test
 /packed_cache_test.exe
 /page_heap_test
@@ -145,5 +147,7 @@
 /test-driver
 /thread_dealloc_unittest
 /thread_dealloc_unittest.exe
+/unique_path_unittest
+/unique_path_unittest.exe
 /unwind_bench
 /unwind_bench.exe

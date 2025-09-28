@@ -4,12 +4,12 @@
 # make sure we're interpreted by some minimal autoconf
 AC_PREREQ([2.69])
 
-AC_INIT([gperftools],[2.10],[gperftools@googlegroups.com])
+AC_INIT([gperftools],[2.13],[gperftools@googlegroups.com])
 # Update this value for every release!  (A:B:C will map to foo.so.(A-C).C.B)
 # http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-TCMALLOC_SO_VERSION=9:10:5
-PROFILER_SO_VERSION=5:5:5
-TCMALLOC_AND_PROFILER_SO_VERSION=10:5:6
+TCMALLOC_SO_VERSION=9:14:5
+PROFILER_SO_VERSION=5:9:5
+TCMALLOC_AND_PROFILER_SO_VERSION=10:9:6
 
 AC_SUBST(TCMALLOC_SO_VERSION)
 AC_SUBST(PROFILER_SO_VERSION)
@@ -109,6 +109,13 @@ AC_ARG_ENABLE([stacktrace-via-backtrace],
                               [enable use of backtrace() for stacktrace capturing (may deadlock)])],
               [enable_backtrace=yes],
               [enable_backtrace="$default_enable_backtrace"])
+AC_ARG_ENABLE([libgcc-unwinder-by-default],
+              [AS_HELP_STRING([--enable-libgcc-unwinder-by-default],
+                              [prefer libgcc's _Unwind_Backtrace as default stacktrace capturing method])],
+              [enable_libgcc_by_default=yes],
+              [enable_libgcc_by_default=no])
+AS_IF([test "x$enable_libgcc_by_default" = xyes],
+      [AC_DEFINE(PREFER_LIBGCC_UNWINDER, 1, [if libgcc stacktrace method should be default])])
 AC_ARG_ENABLE([libunwind],
               [AS_HELP_STRING([--enable-libunwind],
                               [enable libunwind linking])],
@@ -569,7 +576,7 @@ AC_DEFINE(PERFTOOLS_DLL_DECL,,
 # the end result is if config.h is #included twice, its #undefs get
 # evaluated twice, but all the ones in mingw.h/etc only get evaluated
 # once, potentially causing trouble.  c.f.
-#   http://code.google.com/p/gperftools/issues/detail?id=246
+#   https://github.com/gperftools/gperftools/issues/248
 AH_TOP([
 #ifndef GPERFTOOLS_CONFIG_H_
 #define GPERFTOOLS_CONFIG_H_

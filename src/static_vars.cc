@@ -67,13 +67,12 @@ void CentralCacheUnlockAll() NO_THREAD_SAFETY_ANALYSIS
 #endif
 
 bool Static::inited_;
-SpinLock Static::pageheap_lock_(SpinLock::LINKER_INITIALIZED);
 SizeMap Static::sizemap_;
 CentralFreeListPadded Static::central_cache_[kClassSizesMax];
 PageHeapAllocator<Span> Static::span_allocator_;
 PageHeapAllocator<StackTrace> Static::stacktrace_allocator_;
 Span Static::sampled_objects_;
-StackTrace* Static::growth_stacks_ = NULL;
+std::atomic<StackTrace*> Static::growth_stacks_;
 Static::PageHeapStorage Static::pageheap_;
 
 void Static::InitStaticVars() {
@@ -88,7 +87,7 @@ void Static::InitStaticVars() {
     central_cache_[i].Init(i);
   }
 
-  new (&pageheap_.memory) PageHeap;
+  new (&pageheap_.memory) PageHeap(sizemap_.min_span_size_in_pages());
 
 #if defined(ENABLE_AGGRESSIVE_DECOMMIT_BY_DEFAULT)
   const bool kDefaultAggressiveDecommit = true;

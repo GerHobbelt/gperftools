@@ -42,6 +42,7 @@
 #include <config.h>
 
 #include <atomic>
+#include <type_traits>
 
 #include "base/basictypes.h"
 #include "base/dynamic_annotations.h"
@@ -118,11 +119,14 @@ class SCOPED_LOCKABLE SpinLockHolder {
  private:
   SpinLock* lock_;
  public:
-  inline explicit SpinLockHolder(SpinLock* l) EXCLUSIVE_LOCK_FUNCTION(l)
+  explicit SpinLockHolder(SpinLock* l) EXCLUSIVE_LOCK_FUNCTION(l)
       : lock_(l) {
     l->Lock();
   }
-  inline ~SpinLockHolder() UNLOCK_FUNCTION() { lock_->Unlock(); }
+  SpinLockHolder(const SpinLockHolder&) = delete;
+  ~SpinLockHolder() UNLOCK_FUNCTION() {
+    lock_->Unlock();
+  }
 };
 // Catch bug where variable name is omitted, e.g. SpinLockHolder (&lock);
 #define SpinLockHolder(x) COMPILE_ASSERT(0, spin_lock_decl_missing_var_name)
@@ -131,29 +135,30 @@ namespace tcmalloc {
 
 class TrivialOnce {
 public:
-  explicit TrivialOnce(base::LinkerInitialized) {}
-
   template <typename Body>
-  void RunOnce(Body body) {
+  bool RunOnce(Body body) {
     auto done_atomic = reinterpret_cast<std::atomic<int>*>(&done_flag_);
     if (done_atomic->load(std::memory_order_acquire) == 1) {
-      return;
+      return false;
     }
 
     SpinLockHolder h(reinterpret_cast<SpinLock*>(&lock_storage_));
 
     if (done_atomic->load(std::memory_order_relaxed) == 1) {
       // barrier provided by lock
-      return;
+      return false;
     }
     body();
     done_atomic->store(1, std::memory_order_release);
+    return true;
   }
 
 private:
   int done_flag_;
   alignas(alignof(SpinLock)) char lock_storage_[sizeof(SpinLock)];
 };
+
+static_assert(std::is_trivial<TrivialOnce>::value == true, "");
 
 }  // namespace tcmalloc
 

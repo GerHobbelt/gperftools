@@ -14,6 +14,12 @@
 #define GOOGLE_PERFTOOLS_WINDOWS_CONFIG_H_
 #endif
 
+// windows.h whatevevs defines min and max preprocessor macros and
+// that breaks ::max() in various places (like numeric_limits)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #ifndef GOOGLE_PERFTOOLS_WINDOWS_CONFIG_H_
 #define GOOGLE_PERFTOOLS_WINDOWS_CONFIG_H_
 /* used by tcmalloc.h */
@@ -99,11 +105,6 @@
 /* Define to 1 if you have the <grp.h> header file. */
 /* #undef HAVE_GRP_H */
 
-/* Define to 1 if you have the <inttypes.h> header file. */
-#if defined(_MSC_VER) && _MSC_VER >= 1900
-#define HAVE_INTTYPES_H 1
-#endif
-
 /* Define to 1 if you have the <libunwind.h> header file. */
 /* #undef HAVE_LIBUNWIND_H */
 
@@ -140,18 +141,6 @@
 
 /* Define to 1 if you have the <sched.h> header file. */
 /* #undef HAVE_SCHED_H */
-
-/* Define to 1 if you have the <stdint.h> header file. */
-#define HAVE_STDINT_H 1
-
-/* Define to 1 if you have the <stdlib.h> header file. */
-#define HAVE_STDLIB_H 1
-
-/* Define to 1 if you have the <strings.h> header file. */
-/* #undef HAVE_STRINGS_H */
-
-/* Define to 1 if you have the <string.h> header file. */
-#define HAVE_STRING_H 1
 
 /* Define to 1 if the system has the type `struct mallinfo'. */
 /* #undef HAVE_STRUCT_MALLINFO */
@@ -223,7 +212,7 @@
 #define PACKAGE_NAME "gperftools"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "gperftools 2.10"
+#define PACKAGE_STRING "gperftools 2.13"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "gperftools"
@@ -232,7 +221,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.10"
+#define PACKAGE_VERSION "2.13"
 
 /* How to access the PC from a struct ucontext */
 /* #undef PC_FROM_UCONTEXT */
@@ -259,9 +248,6 @@
 
 /* Define internal page size for tcmalloc as number of left bitshift */
 /* #undef TCMALLOC_PAGE_SIZE_SHIFT */
-
-/* Version number of package */
-#define VERSION "2.9.1"
 
 /* C99 says: define this to get the PRI... macros from stdint.h */
 #ifndef __STDC_FORMAT_MACROS

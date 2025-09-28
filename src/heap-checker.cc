@@ -134,16 +134,27 @@ static std::pair<bool, uintptr_t> CaptureRegs(pid_t tid, const Body& body) {
   rv = -1;
 #endif
 
+  // Some Linux architectures and glibc versions only have
+  // PTRACE_GETREGSET, some only PTRACE_GETREGS and some both.
+  //
+  // But glibc tends to define PTRACE_XYZ constants as enums. Some
+  // newer versions also do define, but older glibc (i.e. as shipped
+  // by rhel 6) only define PT_GETREGS (to enum value
+  // PTRACE_GETREGS). Bionic and musl do regular defines,
+  // thankfully. So there seem to be no absolutely perfect way to
+  // detect things.
+  //
+  // We do detect older interface detection by testing defines for
+  // both PTRACE_GETREGS and PT_GETREGS. Which seems to work for range
+  // of OS-es we try to support.
+#if defined(PTRACE_GETREGS) || defined(PT_GETREGS)
   if (rv < 0 && errno == ENOSYS) {
-    // Some newer Linux hw architectures don't have PTRACE_GETREGSET,
-    // or perhaps we're dealing with older kernel.
-#ifdef PTRACE_GETREGS
     rv = syscall(SYS_ptrace, PTRACE_GETREGS, tid, nullptr, &regs);
-#endif
   }
+#endif
 
   if (rv < 0) {
-    return std::make_pair(false, 0);
+    return {false, 0};
   }
 
   uintptr_t sp = *reinterpret_cast<uintptr_t*>(reinterpret_cast<uintptr_t>(&regs) + sp_offset);
@@ -152,7 +163,7 @@ static std::pair<bool, uintptr_t> CaptureRegs(pid_t tid, const Body& body) {
     body(*p);
   }
 
-  return std::make_pair(true, sp);
+  return {true, sp};
 }
 
 using std::string;
@@ -609,7 +620,7 @@ inline static uintptr_t AsInt(const void* ptr) {
 
 // We've seen reports that strstr causes heap-checker crashes in some
 // libc's (?):
-//    http://code.google.com/p/gperftools/issues/detail?id=263
+//    https://github.com/gperftools/gperftools/issues/265
 // It's simple enough to use our own.  This is not in time-critical code.
 static const char* hc_strstr(const char* s1, const char* s2) {
   const size_t len = strlen(s2);
@@ -1890,8 +1901,6 @@ bool HeapLeakChecker::DoNoLeaks(ShouldSymbolize should_symbolize) {
       // Make sure all the hooks really got unset:
       RAW_CHECK(MallocHook::GetNewHook() == NULL, "");
       RAW_CHECK(MallocHook::GetDeleteHook() == NULL, "");
-      RAW_CHECK(MallocHook::GetMmapHook() == NULL, "");
-      RAW_CHECK(MallocHook::GetSbrkHook() == NULL, "");
       have_disabled_hooks_for_symbolize = true;
       leaks->ReportLeaks(name_, pprof_file, true);  // true = should_symbolize
     } else {
@@ -2072,7 +2081,7 @@ void HeapLeakChecker_InternalInitStart() {
                    FLAGS_heap_check.c_str());
   }
   // FreeBSD doesn't seem to honor atexit execution order:
-  //    http://code.google.com/p/gperftools/issues/detail?id=375
+  //    https://github.com/gperftools/gperftools/issues/378
   // Since heap-checking before destructors depends on atexit running
   // at the right time, on FreeBSD we always check after, even in the
   // less strict modes.  This just means FreeBSD is always a bit
@@ -2346,8 +2355,10 @@ void HeapLeakChecker_BeforeConstructors() {
 // HeapLeakChecker is initialized and installs all its hooks early enough to
 // track absolutely all memory allocations and all memory region acquisitions
 // via mmap and sbrk.
-extern "C" void MallocHook_InitAtFirstAllocation_HeapLeakChecker() {
-  HeapLeakChecker_BeforeConstructors();
+extern "C" int MallocHook_InitAtFirstAllocation_HeapLeakChecker() {
+  static tcmalloc::TrivialOnce once;
+
+  return once.RunOnce(&HeapLeakChecker_BeforeConstructors);
 }
 
 // This function is executed after all global object destructors run.

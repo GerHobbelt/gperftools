@@ -36,9 +36,7 @@
 #ifdef HAVE_FCNTL_H
 #include <fcntl.h>
 #endif
-#ifdef HAVE_INTTYPES_H
 #include <inttypes.h>
-#endif
 // We only need malloc.h for struct mallinfo.
 #ifdef HAVE_STRUCT_MALLINFO
 // Malloc can be in several places on older versions of OS X.
@@ -488,7 +486,21 @@ class MallocBlock {
 
   static size_t data_offset() { return OFFSETOF_MEMBER(MallocBlock, size_and_magic2_); }
 
-  size_t data_size() const { return size1_; }
+  size_t raw_data_size() const { return size1_; }
+
+  // Note, this allocation might actually be from memalign, so raw_ptr
+  // might be >= data_addr() (see FromRawPointer and do_debug_memalign
+  // for how it works). So in order to get data size we should be
+  // careful.
+  size_t actual_data_size(const void* raw_ptr) const {
+    const char* raw_begin = static_cast<const char*>(data_addr());
+    const char* raw_end = raw_begin + raw_data_size();
+    CHECK_CONDITION(raw_begin <= raw_end);
+    CHECK_CONDITION(raw_begin <= raw_ptr);
+    CHECK_CONDITION(raw_ptr <= raw_end);
+
+    return raw_end - static_cast<const char*>(raw_ptr);
+  }
 
   void set_offset(int offset) { this->offset_ = offset; }
 
@@ -716,7 +728,7 @@ class MallocBlock {
     RAW_LOG(FATAL,
             "Memory was written to after being freed.  MallocBlock: %p, user "
             "ptr: %p, size: %zd.  If you can't find the source of the error, "
-            "try using ASan (http://code.google.com/p/address-sanitizer/), "
+            "try using ASan (https://github.com/google/sanitizers), "
             "Valgrind, or Purify, or study the "
             "output of the deleter's stack printed above.",
             b, b->data_addr(), size);
@@ -846,7 +858,7 @@ size_t MallocBlock::free_queue_size_ = 0;
 SpinLock MallocBlock::free_queue_lock_(SpinLock::LINKER_INITIALIZED);
 
 unsigned char MallocBlock::kMagicDeletedBuffer[1024];
-tcmalloc::TrivialOnce MallocBlock::deleted_buffer_initialized_{base::LINKER_INITIALIZED};
+tcmalloc::TrivialOnce MallocBlock::deleted_buffer_initialized_;
 
 const char* const MallocBlock::kAllocName[] = {
   "malloc",
@@ -1039,7 +1051,7 @@ static inline void* DebugAllocate(size_t size, int type) {
 
 static inline void DebugDeallocate(void* ptr, int type, size_t given_size) {
   MALLOC_TRACE("free",
-               (ptr != 0 ? MallocBlock::FromRawPointer(ptr)->data_size() : 0),
+               (ptr != 0 ? MallocBlock::FromRawPointer(ptr)->actual_data_size(ptr) : 0),
                ptr);
   if (ptr)  MallocBlock::FromRawPointer(ptr)->Deallocate(type, given_size);
 }
@@ -1094,7 +1106,7 @@ class DebugMallocImplementation : public TCMallocImplementation {
     if (p) {
       RAW_CHECK(GetOwnership(p) != MallocExtension::kNotOwned,
                 "ptr not allocated by tcmalloc");
-      return MallocBlock::FromRawPointer(p)->data_size();
+      return MallocBlock::FromRawPointer(p)->actual_data_size(p);
     }
     return 0;
   }
@@ -1299,22 +1311,13 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_realloc(void* ptr, size_t size) PERFTOOLS
   // return null
   if (p == NULL)  return NULL;
 
-  // if ptr was allocated via memalign, then old->data_size() is not
-  // start of user data. So we must be careful to copy only user-data
-  char *old_begin = (char *)old->data_addr();
-  char *old_end = old_begin + old->data_size();
-
-  ssize_t old_ssize = old_end - (char *)ptr;
-  CHECK_CONDITION(old_ssize >= 0);
-
-  size_t old_size = (size_t)old_ssize;
-  CHECK_CONDITION(old_size <= old->data_size());
+  size_t old_size = old->actual_data_size(ptr);
 
   memcpy(p->data_addr(), ptr, (old_size < size) ? old_size : size);
   MallocHook::InvokeDeleteHook(ptr);
   MallocHook::InvokeNewHook(p->data_addr(), size);
   DebugDeallocate(ptr, MallocBlock::kMallocType, 0);
-  MALLOC_TRACE("realloc", p->data_size(), p->data_addr());
+  MALLOC_TRACE("realloc", p->actual_data_size(p->data_addr()), p->data_addr());
   return p->data_addr();
 }
 

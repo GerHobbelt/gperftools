@@ -69,15 +69,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#ifdef HAVE_STDINT_H
 #include <stdint.h>        // for intptr_t
-#endif
 #include <sys/types.h>     // for size_t
 #ifdef HAVE_FCNTL_H
 #include <fcntl.h>         // for open; used with mmap-hook test
-#endif
-#ifdef HAVE_MMAP
-#include <sys/mman.h>      // for testing mmap hooks
 #endif
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>        // defines pvalloc/etc on cygwin
@@ -786,12 +781,6 @@ static void TestNothrowNew(void* (*func)(size_t, const std::nothrow_t&)) {
 // We do one for each hook typedef in malloc_hook.h
 MAKE_HOOK_CALLBACK(NewHook, const void*, size_t);
 MAKE_HOOK_CALLBACK(DeleteHook, const void*);
-MAKE_HOOK_CALLBACK(MmapHook, const void*, const void*, size_t, int, int, int,
-                   off_t);
-MAKE_HOOK_CALLBACK(MremapHook, const void*, const void*, size_t, size_t, int,
-                   const void*);
-MAKE_HOOK_CALLBACK(MunmapHook, const void *, size_t);
-MAKE_HOOK_CALLBACK(SbrkHook, const void *, ptrdiff_t);
 
 static void TestAlignmentForSize(int size) {
   fprintf(LOGSTREAM, "Testing alignment of malloc(%d)\n", size);
@@ -879,15 +868,21 @@ static void CheckRangeCallback(void* ptr, base::MallocRange::Type type,
 
 }
 
-static bool HaveSystemRelease =
-    TCMalloc_SystemRelease(TCMalloc_SystemAlloc(kPageSize, NULL, 0), kPageSize);
+static bool HaveSystemRelease() {
+  static bool retval = ([] () {
+    size_t actual;
+    auto ptr = TCMalloc_SystemAlloc(kPageSize, &actual, 0);
+    return TCMalloc_SystemRelease(ptr, actual);
+  }());
+  return retval;
+}
 
 static void TestRanges() {
   static const int MB = 1048576;
   void* a = malloc(MB);
   void* b = malloc(MB);
   base::MallocRange::Type releasedType =
-      HaveSystemRelease ? base::MallocRange::UNMAPPED : base::MallocRange::FREE;
+    HaveSystemRelease() ? base::MallocRange::UNMAPPED : base::MallocRange::FREE;
 
   CheckRangeCallback(a, base::MallocRange::INUSE, MB);
   CheckRangeCallback(b, base::MallocRange::INUSE, MB);
@@ -934,7 +929,7 @@ static void TestReleaseToSystem() {
   // teset in this mode.  TODO(csilvers): get it to work for debugalloc?
 #ifndef DEBUGALLOCATION
 
-  if(!HaveSystemRelease) return;
+  if(!HaveSystemRelease()) return;
 
   const double old_tcmalloc_release_rate = FLAGS_tcmalloc_release_rate;
   FLAGS_tcmalloc_release_rate = 0;
@@ -997,7 +992,7 @@ static void TestAggressiveDecommit() {
   // teset in this mode.
 #ifndef DEBUGALLOCATION
 
-  if(!HaveSystemRelease) return;
+  if(!HaveSystemRelease()) return;
 
   fprintf(LOGSTREAM, "Testing aggressive de-commit\n");
 
@@ -1123,8 +1118,23 @@ static void check_global_nallocx() { CHECK_GT(nallocx(99, 0), 99); }
 
 #endif // __GNUC__
 
+static size_t GrowNallocxTestSize(size_t sz) {
+  if (sz < 1024) {
+    return sz + 7;
+  }
+
+  size_t divided = sz >> 7;
+  divided |= (divided >> 1);
+  divided |= (divided >> 2);
+  divided |= (divided >> 4);
+  divided |= (divided >> 8);
+  divided |= (divided >> 16);
+  divided += 1;
+  return sz + divided;
+}
+
 static void TestNAllocX() {
-  for (size_t size = 0; size <= (1 << 20); size += 7) {
+  for (size_t size = 0; size <= (1 << 20); size = GrowNallocxTestSize(size)) {
     size_t rounded = nallocx(size, 0);
     ASSERT_GE(rounded, size);
     void* ptr = malloc(size);
@@ -1134,7 +1144,7 @@ static void TestNAllocX() {
 }
 
 static void TestNAllocXAlignment() {
-  for (size_t size = 0; size <= (1 << 20); size += 7) {
+  for (size_t size = 0; size <= (1 << 20); size = GrowNallocxTestSize(size)) {
     for (size_t align = 0; align < 10; align++) {
       size_t rounded = nallocx(size, MALLOCX_LG_ALIGN(align));
       ASSERT_GE(rounded, size);
@@ -1470,70 +1480,11 @@ static int RunAllTests(int argc, char** argv) {
     VerifyDeleteHookWasCalled();
 #endif
 
-    // Test mmap too: both anonymous mmap and mmap of a file
-    // Note that for right now we only override mmap on linux
-    // systems, so those are the only ones for which we check.
-    SetMmapHook();
-    SetMremapHook();
-    SetMunmapHook();
-#if defined(HAVE_MMAP) && defined(__linux) && \
-       (defined(__i386__) || defined(__x86_64__))
-    int size = 8192*2;
-    p1 = mmap(NULL, size, PROT_WRITE|PROT_READ, MAP_ANONYMOUS|MAP_PRIVATE,
-              -1, 0);
-    CHECK(p1 != NULL);
-    VerifyMmapHookWasCalled();
-    p1 = mremap(p1, size, size/2, 0);
-    CHECK(p1 != NULL);
-    VerifyMremapHookWasCalled();
-    size /= 2;
-    munmap(p1, size);
-    VerifyMunmapHookWasCalled();
-
-    int fd = open("/dev/zero", O_RDONLY);
-    CHECK_GE(fd, 0);   // make sure the open succeeded
-    p1 = mmap(NULL, 8192, PROT_READ, MAP_SHARED, fd, 0);
-    CHECK(p1 != NULL);
-    VerifyMmapHookWasCalled();
-    munmap(p1, 8192);
-    VerifyMunmapHookWasCalled();
-    close(fd);
-#else   // this is just to quiet the compiler: make sure all fns are called
-    IncrementCallsToMmapHook(NULL, NULL, 0, 0, 0, 0, 0);
-    IncrementCallsToMunmapHook(NULL, 0);
-    IncrementCallsToMremapHook(NULL, NULL, 0, 0, 0, NULL);
-    VerifyMmapHookWasCalled();
-    VerifyMremapHookWasCalled();
-    VerifyMunmapHookWasCalled();
-#endif
-
-    // Test sbrk
-    SetSbrkHook();
-#if defined(HAVE___SBRK) && defined(__linux) && \
-       (defined(__i386__) || defined(__x86_64__))
-    p1 = sbrk(8192);
-    CHECK(p1 != NULL);
-    VerifySbrkHookWasCalled();
-    p1 = sbrk(-8192);
-    CHECK(p1 != NULL);
-    VerifySbrkHookWasCalled();
-    // However, sbrk hook should *not* be called with sbrk(0)
-    p1 = sbrk(0);
-    CHECK(p1 != NULL);
-    CHECK_EQ(g_SbrkHook_calls, 0);
-#else   // this is just to quiet the compiler: make sure all fns are called
-    IncrementCallsToSbrkHook(NULL, 0);
-    VerifySbrkHookWasCalled();
-#endif
-
     // Reset the hooks to what they used to be.  These are all
     // defined as part of MAKE_HOOK_CALLBACK, above.
     ResetNewHook();
     ResetDeleteHook();
-    ResetMmapHook();
-    ResetMremapHook();
-    ResetMunmapHook();
-    ResetSbrkHook();
+
   }
 
   // Check that "lots" of memory can be allocated
@@ -1632,13 +1583,21 @@ static int RunAllTests(int argc, char** argv) {
   return 0;
 }
 
-}
+}  // namespace testing
 
 using testing::RunAllTests;
 
 int main(int argc, char** argv) {
 #ifdef DEBUGALLOCATION    // debug allocation takes forever for huge allocs
   FLAGS_max_free_queue_size = 0;  // return freed blocks to tcmalloc immediately
+#endif
+
+#if defined(__linux) || defined(_WIN32)
+  // We know that Linux and Windows have functional memory releasing
+  // support. So don't let us degrade on that.
+  if (!getenv("DONT_TEST_SYSTEM_RELEASE")) {
+    CHECK_CONDITION(testing::HaveSystemRelease());
+  }
 #endif
 
   RunAllTests(argc, argv);

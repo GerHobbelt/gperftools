@@ -5,14 +5,14 @@ cmake_minimum_required(VERSION 3.12)
 
 # Based on configure.ac
 
-project(gperftools VERSION 2.10.0 LANGUAGES C CXX
+project(gperftools VERSION 2.13 LANGUAGES C CXX
         DESCRIPTION "Performance tools for C++"
-        HOMEPAGE_URL http://code.google.com/p/gperftools/)
+        HOMEPAGE_URL https://github.com/gperftools/gperftools)
 
 # Update this value for every release!
-set(TCMALLOC_SO_VERSION 9.10.5)
-set(PROFILER_SO_VERSION 5.5.5)
-set(TCMALLOC_AND_PROFILER_SO_VERSION 10.5.6)
+set(TCMALLOC_SO_VERSION 9.14.5)
+set(PROFILER_SO_VERSION 5.9.5)
+set(TCMALLOC_AND_PROFILER_SO_VERSION 10.9.6)
 
 # The user can choose not to compile in the heap-profiler, the
 # heap-checker, or the cpu-profiler.  There's also the possibility
@@ -188,7 +188,6 @@ check_include_file("sys/resource.h" HAVE_SYS_RESOURCE_H) # for memalign_unittest
 check_include_file("sys/cdefs.h" HAVE_SYS_CDEFS_H) # Where glibc defines __THROW
 
 check_include_file("unistd.h" HAVE_UNISTD_H)
-check_include_file("inttypes.h" HAVE_INTTYPES_H)
 # We also need <ucontext.h>/<sys/ucontext.h>, but we get those from
 # AC_PC_FROM_UCONTEXT, below.
 
@@ -353,6 +352,8 @@ elseif(APPLE)
                     "it unsafe to use from malloc replacement")
 elseif(MINGW)
   message(WARNING "mingw doesn't really support tls")
+elseif(MSVC)
+  check_c_source_compiles("static __declspec(thread) int p = 0; int main() {}" HAVE_TLS)
 else()
   check_c_source_compiles("static __thread int p = 0; int main() {}" HAVE_TLS)
 endif()
@@ -587,12 +588,11 @@ if(BUILD_TESTING)
           src/gperftools/malloc_hook.h
           src/gperftools/malloc_hook_c.h
           src/malloc_hook-inl.h
-          src/malloc_hook_mmap_linux.h
-          src/malloc_hook_mmap_freebsd.h
           ${SPINLOCK_INCLUDES}
           ${LOGGING_INCLUDES})
   set(low_level_alloc_unittest_SOURCES src/base/low_level_alloc.cc
           src/malloc_hook.cc
+          src/mmap_hook.cc
           src/tests/low_level_alloc_unittest.cc
           ${LOW_LEVEL_ALLOC_UNITTEST_INCLUDES})
   if(MSVC OR MINGW)
@@ -650,6 +650,10 @@ if(WITH_STACK_TRACE)
     add_executable(stacktrace_unittest ${stacktrace_unittest_SOURCES})
     target_link_libraries(stacktrace_unittest stacktrace logging fake_stacktrace_scope)
     add_test(stacktrace_unittest stacktrace_unittest)
+
+    add_executable(check_address_unittest src/tests/check_address_test.cc)
+    target_link_libraries(check_address_unittest spinlock sysinfo logging)
+    add_test(check_address_unittest check_address_unittest)
   endif()
 
 endif()
@@ -700,9 +704,7 @@ set(S_TCMALLOC_MINIMAL_INCLUDES src/common.h
         src/thread_cache.h
         src/stack_trace_table.h
         src/base/thread_annotations.h
-        src/malloc_hook-inl.h
-        src/malloc_hook_mmap_linux.h
-        src/malloc_hook_mmap_freebsd.h)
+        src/malloc_hook-inl.h)
 set(SG_TCMALLOC_MINIMAL_INCLUDES src/gperftools/malloc_hook.h
         src/gperftools/malloc_hook_c.h
         src/gperftools/malloc_extension.h
@@ -813,10 +815,14 @@ if(BUILD_TESTING)
   target_link_libraries(addressmap_unittest logging)
   add_test(addressmap_unittest addressmap_unittest)
 
-  if(NOT MINGW)
+  if(NOT MINGW AND NOT MSVC)
     add_executable(system_alloc_unittest src/tests/system-alloc_unittest.cc)
     target_link_libraries(system_alloc_unittest PUBLIC tcmalloc_minimal)
     add_test(system_alloc_unittest system_alloc_unittest)
+
+    add_executable(unique_path_unittest src/tests/unique_path_unittest.cc)
+    target_link_libraries(unique_path_unittest PRIVATE sysinfo logging)
+    add_test(unique_path_unittest unique_path_unittest)
   endif()
 
   add_executable(packed_cache_test src/tests/packed-cache_test.cc)
@@ -843,6 +849,12 @@ if(BUILD_TESTING)
           src/tests/testutil.cc)
   target_link_libraries(malloc_hook_test tcmalloc_minimal Threads::Threads)
   add_test(malloc_hook_test malloc_hook_test)
+
+  add_executable(mmap_hook_test
+          src/tests/mmap_hook_test.cc
+          src/mmap_hook.cc)
+  target_link_libraries(mmap_hook_test spinlock sysinfo logging)
+  add_test(mmap_hook_test mmap_hook_test)
 
   set(malloc_extension_test_SOURCES src/tests/malloc_extension_test.cc
           src/config_for_unittests.h
@@ -1013,6 +1025,7 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
           src/heap-profile-table.h
           src/heap-profile-stats.h
           src/maybe_emergency_malloc.h
+          src/mmap_hook.h
           src/emergency_malloc.h)
 
   set(SG_TCMALLOC_INCLUDES src/gperftools/heap-profiler.h
@@ -1035,6 +1048,7 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
   set(libtcmalloc_internal_la_SOURCES ${libtcmalloc_minimal_internal_la_SOURCES}
           ${TCMALLOC_INCLUDES}
           src/base/low_level_alloc.cc
+          src/mmap_hook.cc
           src/heap-profile-table.cc
           src/heap-profiler.cc
           src/raw_printer.cc
