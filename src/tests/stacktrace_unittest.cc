@@ -35,11 +35,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// On those architectures we can and should test if backtracing with
-// ucontext and from signal handler works
-#if __GNUC__ && __linux__ && (__x86_64__ || __aarch64__ || __riscv)
+// We only test this on Linux because frame skip count works there and
+// doesn't on FreeBSD.
+#if __linux__
 #include <signal.h>
+#include <sys/time.h>
 #define TEST_UCONTEXT_BITS 1
+#endif
+
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#undef TEST_UCONTEXT_BITS
+#  endif
 #endif
 
 #include "base/commandlineflags.h"
@@ -120,29 +127,28 @@ void CheckRetAddrIsInFunction(void *ret_addr, const AddressRange &range)
 #if TEST_UCONTEXT_BITS
 
 struct get_stack_trace_args {
-	int *size_ptr;
-	void **result;
-	int max_depth;
-	uintptr_t where;
+  volatile bool ready;
+  volatile bool captured;
+
+  int *size_ptr;
+  void **result;
+  int max_depth;
 } gst_args;
 
 static
 void SignalHandler(int dummy, siginfo_t *si, void* ucv) {
-	auto uc = static_cast<ucontext_t*>(ucv);
+  if (!gst_args.ready || gst_args.captured) {
+    return;
+  }
 
-#ifdef __riscv
-	uc->uc_mcontext.__gregs[REG_PC] = gst_args.where;
-#elif __aarch64__
-	uc->uc_mcontext.pc = gst_args.where;
-#else
-	uc->uc_mcontext.gregs[REG_RIP] = gst_args.where;
-#endif
+  gst_args.captured = true;
 
-	*gst_args.size_ptr = GetStackTraceWithContext(
-		gst_args.result,
-		gst_args.max_depth,
-		2,
-		uc);
+  auto uc = static_cast<ucontext_t*>(ucv);
+
+  *gst_args.size_ptr = GetStackTraceWithContext(gst_args.result,
+                                                gst_args.max_depth,
+                                                2,
+                                                uc);
 }
 
 int ATTRIBUTE_NOINLINE CaptureLeafUContext(void **stack, int stack_len) {
@@ -153,27 +159,38 @@ int ATTRIBUTE_NOINLINE CaptureLeafUContext(void **stack, int stack_len) {
 
   printf("Capturing stack trace from signal's ucontext\n");
   struct sigaction sa;
+  struct sigaction old_sa;
   memset(&sa, 0, sizeof(sa));
   sa.sa_sigaction = SignalHandler;
   sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
-  int rv = sigaction(SIGSEGV, &sa, nullptr);
+  int rv = sigaction(SIGPROF, &sa, &old_sa);
   CHECK(rv == 0);
 
   gst_args.size_ptr = &size;
   gst_args.result = stack;
   gst_args.max_depth = stack_len;
-  gst_args.where = reinterpret_cast<uintptr_t>(noopt(&&after));
 
-  // now, "write" to null pointer and trigger sigsegv to run signal
-  // handler. It'll then change PC to after, as if we jumped one line
-  // below.
-  *noopt(reinterpret_cast<void**>(0)) = 0;
-  // this is not reached, but gcc gets really odd if we don't actually
-  // use computed goto.
-  static void* jump_target = &&after;
-  goto *noopt(&jump_target);
+  struct itimerval it;
+  it.it_interval.tv_sec = 0;
+  it.it_interval.tv_usec = 0;
+  it.it_value.tv_sec = 0;
+  it.it_value.tv_usec = 1;
 
-after:
+  CHECK(!gst_args.captured);
+
+  rv = setitimer(ITIMER_PROF, &it, nullptr);
+  CHECK(rv == 0);
+
+  // SignalHandler will run somewhere here, making sure we capture
+  // backtrace from signal handler
+  gst_args.ready = true;
+  while (!gst_args.captured) {
+    // do nothing
+  }
+
+  rv = sigaction(SIGPROF, &old_sa, nullptr);
+  CHECK(rv == 0);
+
   printf("Obtained %d stack frames.\n", size);
   CHECK_GE(size, 1);
   CHECK_LE(size, stack_len);
@@ -190,6 +207,27 @@ int ATTRIBUTE_NOINLINE CaptureLeafPlain(void **stack, int stack_len) {
   DECLARE_ADDRESS_LABEL(start);
 
   int size = GetStackTrace(stack, stack_len, 0);
+
+  printf("Obtained %d stack frames.\n", size);
+  CHECK_GE(size, 1);
+  CHECK_LE(size, stack_len);
+
+  DECLARE_ADDRESS_LABEL(end);
+
+  return size;
+}
+
+int ATTRIBUTE_NOINLINE CaptureLeafWSkip(void **stack, int stack_len) {
+  INIT_ADDRESS_RANGE(CheckStackTraceLeaf, start, end, &expected_range[0]);
+  DECLARE_ADDRESS_LABEL(start);
+
+  auto trampoline = [] (void **stack, int stack_len) ATTRIBUTE_NOINLINE {
+    int rv = GetStackTrace(stack, stack_len, 1);
+    (void)*(void * volatile *)(stack); // prevent tail-calling GetStackTrace
+    return rv;
+  };
+
+  int size = trampoline(stack, stack_len);
 
   printf("Obtained %d stack frames.\n", size);
   CHECK_GE(size, 1);
@@ -285,6 +323,11 @@ void ATTRIBUTE_NOINLINE CheckStackTrace(int i) {
 //-----------------------------------------------------------------------//
 
 int main(int argc, char ** argv) {
+  CheckStackTrace(0);
+  printf("PASS\n");
+
+  printf("Will test capturing stack trace with skipped frames\n");
+  leaf_capture_fn = CaptureLeafWSkip;
   CheckStackTrace(0);
   printf("PASS\n");
 

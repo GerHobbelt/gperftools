@@ -1,5 +1,5 @@
-/* -*- Mode: c; c-basic-offset: 2; indent-tabs-mode: nil -*- */
-/* Copyright (c) 2005-2007, Google Inc.
+// -*- Mode: c; c-basic-offset: 2; indent-tabs-mode: nil -*-
+/* Copyright (c) 2008-2009, Google Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,56 +29,32 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * ---
- * Author: Markus Gutschke
+ * Author: Kostya Serebryany
  */
 
 #include "config.h"
+#include <stdlib.h>
+#include <string.h>
 
-#include "base/thread_lister.h"
+#include "base/dynamic_annotations.h"
+#include "getenv_safe.h" // for TCMallocGetenvSafe
 
-#include <stdio.h>         /* needed for NULL on some powerpc platforms (?!) */
-#include <sys/types.h>
-#include <unistd.h>        /* for getpid */
-
-#ifdef HAVE_SYS_PRCTL
-# include <sys/prctl.h>
+static int GetRunningOnValgrind(void) {
+#ifdef RUNNING_ON_VALGRIND
+  if (RUNNING_ON_VALGRIND) return 1;
 #endif
-
-#include "base/linuxthreads.h"
-/* Include other thread listers here that define THREADS macro
- * only when they can provide a good implementation.
- */
-
-#ifndef THREADS
-
-/* Default trivial thread lister for single-threaded applications,
- * or if the multi-threading code has not been ported, yet.
- */
-
-int TCMalloc_ListAllProcessThreads(void *parameter,
-				   ListAllProcessThreadsCallBack callback, ...) {
-  int rc;
-  va_list ap;
-  pid_t pid;
-
-#ifdef HAVE_SYS_PRCTL
-  int dumpable = prctl(PR_GET_DUMPABLE, 0);
-  if (!dumpable)
-    prctl(PR_SET_DUMPABLE, 1);
-#endif
-  va_start(ap, callback);
-  pid = getpid();
-  rc = callback(parameter, 1, &pid, ap);
-  va_end(ap);
-#ifdef HAVE_SYS_PRCTL
-  if (!dumpable)
-    prctl(PR_SET_DUMPABLE, 0);
-#endif
-  return rc;
+  const char *running_on_valgrind_str = TCMallocGetenvSafe("RUNNING_ON_VALGRIND");
+  if (running_on_valgrind_str) {
+    return strcmp(running_on_valgrind_str, "0") != 0;
+  }
+  return 0;
 }
 
-int TCMalloc_ResumeAllProcessThreads(int num_threads, pid_t *thread_pids) {
-  return 1;
+/* See the comments in dynamic_annotations.h */
+int RunningOnValgrind(void) {
+  static volatile int running_on_valgrind = -1;
+  int local_running_on_valgrind = running_on_valgrind;
+  if (local_running_on_valgrind == -1)
+    running_on_valgrind = local_running_on_valgrind = GetRunningOnValgrind();
+  return local_running_on_valgrind;
 }
-
-#endif   /* ifndef THREADS */

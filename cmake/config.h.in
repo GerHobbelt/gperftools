@@ -96,10 +96,9 @@
 #cmakedefine HAVE_INTTYPES_H
 
 /* Define to 1 if you have the <libunwind.h> header file. */
-#cmakedefine01 HAVE_LIBUNWIND_H
+#cmakedefine HAVE_LIBUNWIND_H
 
-/* Define to 1 if you have the <linux/ptrace.h> header file. */
-#cmakedefine HAVE_LINUX_PTRACE_H
+#cmakedefine USE_LIBUNWIND
 
 /* Define if this is Linux that has SIGEV_THREAD_ID */
 #cmakedefine01 HAVE_LINUX_SIGEV_THREAD_ID
@@ -159,9 +158,6 @@
 /* Define to 1 if you have the <sys/malloc.h> header file. */
 #cmakedefine HAVE_SYS_MALLOC_H
 
-/* Define to 1 if you have the <sys/prctl.h> header file. */
-#cmakedefine HAVE_SYS_PRCTL_H
-
 /* Define to 1 if you have the <sys/resource.h> header file. */
 #cmakedefine HAVE_SYS_RESOURCE_H
 
@@ -212,9 +208,6 @@
 
 /* prefix where we look for installed files */
 #cmakedefine INSTALL_PREFIX
-
-/* Define to 1 if int32_t is equivalent to intptr_t */
-#cmakedefine INT32_EQUALS_INTPTR
 
 /* Define to the sub-directory where libtool stores uninstalled libraries. */
 #cmakedefine LT_OBJDIR
@@ -269,13 +262,6 @@
 #ifdef __FreeBSD__
 #define PTHREADS_CRASHES_IF_RUN_TOO_EARLY 1
 #endif
-
-/* Define to necessary symbol if this constant uses a non-standard name on
-   your system. */
-#define PTHREAD_CREATE_JOINABLE @PTHREAD_CREATE_JOINABLE@
-
-/* Define to 1 if you have the ANSI C header files. */
-#define STDC_HEADERS 1
 
 /* Define 8 bytes of allocation alignment for tcmalloc */
 #cmakedefine TCMALLOC_ALIGN_8BYTES

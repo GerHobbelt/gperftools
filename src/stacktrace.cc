@@ -102,14 +102,14 @@ struct GetStackImplementation {
 
 // libunwind uses __thread so we check for both libunwind.h and
 // __thread support
-#if defined(HAVE_LIBUNWIND_H) && defined(HAVE_TLS)
+#if defined(USE_LIBUNWIND) && defined(HAVE_TLS)
 #define STACKTRACE_INL_HEADER "stacktrace_libunwind-inl.h"
 #define GST_SUFFIX libunwind
 #include "stacktrace_impl_setup-inl.h"
 #undef GST_SUFFIX
 #undef STACKTRACE_INL_HEADER
 #define HAVE_GST_libunwind
-#endif // HAVE_LIBUNWIND_H
+#endif // USE_LIBUNWIND
 
 #if defined(__i386__) || defined(__x86_64__)
 #define STACKTRACE_INL_HEADER "stacktrace_x86-inl.h"
@@ -219,7 +219,7 @@ static GetStackImplementation *all_impls[] = {
 
 // ppc and i386 implementations prefer arch-specific asm implementations.
 // arm's asm implementation is broken
-#if defined(__i386__) || defined(__ppc__) || defined(__PPC__)
+#if defined(__i386__) || defined(__ppc__) || defined(__PPC__) || defined(__loongarch64)
 #if !defined(NO_FRAME_POINTER)
 #define TCMALLOC_DONT_PREFER_LIBUNWIND
 #endif
@@ -294,6 +294,7 @@ namespace {
   };
 }
 
+ATTRIBUTE_NOINLINE
 PERFTOOLS_DLL_DECL int GetStackFrames(void** result, int* sizes, int max_depth,
                                       int skip_count) {
   StacktraceScope scope;
@@ -304,6 +305,7 @@ PERFTOOLS_DLL_DECL int GetStackFrames(void** result, int* sizes, int max_depth,
   return frame_forcer(get_stack_impl->GetStackFramesPtr(result, sizes, max_depth, skip_count));
 }
 
+ATTRIBUTE_NOINLINE
 PERFTOOLS_DLL_DECL int GetStackFramesWithContext(void** result, int* sizes, int max_depth,
                                                  int skip_count, const void *uc) {
   StacktraceScope scope;
@@ -316,6 +318,7 @@ PERFTOOLS_DLL_DECL int GetStackFramesWithContext(void** result, int* sizes, int 
                         skip_count, uc));
 }
 
+ATTRIBUTE_NOINLINE
 PERFTOOLS_DLL_DECL int GetStackTrace(void** result, int max_depth,
                                      int skip_count) {
   StacktraceScope scope;
@@ -326,6 +329,7 @@ PERFTOOLS_DLL_DECL int GetStackTrace(void** result, int max_depth,
   return frame_forcer(get_stack_impl->GetStackTracePtr(result, max_depth, skip_count));
 }
 
+ATTRIBUTE_NOINLINE
 PERFTOOLS_DLL_DECL int GetStackTraceWithContext(void** result, int max_depth,
                                                 int skip_count, const void *uc) {
   StacktraceScope scope;

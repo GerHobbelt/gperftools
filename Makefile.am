@@ -23,13 +23,10 @@ if GCC
 AM_CXXFLAGS += -Wall -Wwrite-strings -Woverloaded-virtual \
                -Wno-sign-compare
 
-# On i386, -mmmx is needed for the mmx-based instructions in
-# atomicops-internal-x86.h. Also as of gcc 4.6, -fomit-frame-pointer
-# is the default. Since we must always have frame pointers for I386
-# in order to generate backtraces we now specify -fno-omit-frame-pointer
-# by default.
+# x86-es (starting from gcc-4.6 as per earlier comment) have
+# -momit-leaf-frame-pointer by default. And on i386 we "traditionally"
+# used to re-enable frame pointers. So lets keep doing it.
 if I386
-AM_CXXFLAGS += -mmmx
 AM_CXXFLAGS += -fno-omit-frame-pointer
 endif I386
 endif GCC
@@ -76,9 +73,6 @@ endif MINGW
 # can override our malloc if they want to (they can still use tc_malloc).
 # Note: the weird-looking symbols are the c++ memory functions:
 # (in order) new, new(nothrow), new[], new[](nothrow), delete, delete[]
-# In theory this will break if mangling changes, but that seems pretty
-# unlikely at this point.  Just in case, I throw in versions with an
-# extra underscore as well, which may help on OS X.
 if HAVE_OBJCOPY_WEAKEN
 WEAKEN = $(OBJCOPY) -W malloc -W free -W realloc -W calloc -W cfree \
          -W memalign -W posix_memalign -W valloc -W pvalloc \
@@ -87,7 +81,16 @@ WEAKEN = $(OBJCOPY) -W malloc -W free -W realloc -W calloc -W cfree \
          -W _Znwm -W _ZnwmRKSt9nothrow_t -W _Znam -W _ZnamRKSt9nothrow_t \
          -W _ZdlPv -W _ZdaPv \
          -W __Znwm -W __ZnwmRKSt9nothrow_t -W __Znam -W __ZnamRKSt9nothrow_t \
-         -W __ZdlPv -W __ZdaPv
+         -W __ZdlPv -W __ZdaPv \
+         -W _ZdaPvRKSt9nothrow_t -W _ZdaPvSt11align_val_t \
+         -W _ZdaPvSt11align_val_tRKSt9nothrow_t -W _ZdaPvm \
+         -W _ZdaPvmSt11align_val_t -W _ZdlPvRKSt9nothrow_t \
+         -W _ZdlPvSt11align_val_t -W _ZdlPvSt11align_val_tRKSt9nothrow_t \
+         -W _ZdlPvm -W _ZdlPvmSt11align_val_t \
+         -W _ZnamSt11align_val_t -W _ZnamSt11align_val_tRKSt9nothrow_t \
+         -W _ZnwmSt11align_val_t -W _ZnwmSt11align_val_tRKSt9nothrow_t \
+         -W malloc_size -W malloc_usable_size
+
 else
 WEAKEN = :
 endif !HAVE_OBJCOPY_WEAKEN
@@ -122,7 +125,7 @@ googleinclude_HEADERS =				\
 # Add your documentation files (in doc/) in addition to these
 # top-level boilerplate files.  Also add a TODO file if you have one.
 # We'll add to this later, on a library-by-library basis
-dist_doc_DATA = AUTHORS COPYING ChangeLog INSTALL NEWS README README_windows.txt \
+dist_doc_DATA = AUTHORS COPYING INSTALL NEWS README README_windows.txt \
                 TODO ChangeLog.old
 
 # The libraries (.so's) you want to install
@@ -172,7 +175,7 @@ LOGGING_INCLUDES = src/base/logging.h \
                    src/base/dynamic_annotations.h
 noinst_LTLIBRARIES += liblogging.la
 liblogging_la_SOURCES = src/base/logging.cc \
-                        src/base/dynamic_annotations.c \
+                        src/base/dynamic_annotations.cc \
                         $(LOGGING_INCLUDES)
 
 SYSINFO_INCLUDES = src/base/sysinfo.h \
@@ -194,9 +197,8 @@ libmaybe_threads_la_SOURCES = src/maybe_threads.h
 # windows.a library in exactly the same place we need spinlock.a
 # (pretty much everywhere), so we can use the same variable name for
 # each.  We can also optimize the MinGW rule a bit by leaving out
-# files we know aren't used on windows, such as
-# atomicops-internals-x86.cc.  libwindows also obsoletes the need for
-# other files like system_alloc.cc.
+# files we know aren't used on windows. libwindows also obsoletes the
+# need for other files like system_alloc.cc.
 if MINGW
 WINDOWS_INCLUDES = src/windows/port.h \
                    src/windows/mingw.h \
@@ -220,19 +222,10 @@ SPINLOCK_INCLUDES = src/base/spinlock.h \
                     src/base/spinlock_internal.h \
                     src/base/spinlock_win32-inl.h \
                     src/base/spinlock_linux-inl.h \
-                    src/base/spinlock_posix-inl.h \
-                    src/base/atomicops-internals-macosx.h \
-                    src/base/atomicops-internals-linuxppc.h \
-                    src/base/atomicops-internals-arm-generic.h \
-                    src/base/atomicops-internals-arm-v6plus.h \
-                    src/base/atomicops-internals-mips.h \
-                    src/base/atomicops-internals-windows.h \
-                    src/base/atomicops-internals-gcc.h \
-                    src/base/atomicops-internals-x86.h
+                    src/base/spinlock_posix-inl.h
 noinst_LTLIBRARIES += libspinlock.la
 libspinlock_la_SOURCES = src/base/spinlock.cc \
                          src/base/spinlock_internal.cc \
-                         src/base/atomicops-internals-x86.cc \
                          $(SPINLOCK_INCLUDES)
 
 LIBSPINLOCK = libwindows.la libspinlock.la libsysinfo.la liblogging.la
@@ -261,19 +254,12 @@ libmaybe_threads_la_SOURCES += src/maybe_threads.cc
 endif
 SYSTEM_ALLOC_CC =
 else !MINGW
-# spinlock is the only code that uses atomicops.
 SPINLOCK_INCLUDES = src/base/spinlock.h \
-                    src/base/spinlock_internal.h \
-                    src/base/atomicops.h \
-                    src/base/atomicops-internals-macosx.h \
-                    src/base/atomicops-internals-linuxppc.h \
-                    src/base/atomicops-internals-windows.h \
-                    src/base/atomicops-internals-x86.h
+                    src/base/spinlock_internal.h
 
 noinst_LTLIBRARIES += libspinlock.la
 libspinlock_la_SOURCES = src/base/spinlock.cc \
                          src/base/spinlock_internal.cc \
-                         src/base/atomicops-internals-x86.cc \
                          $(SPINLOCK_INCLUDES)
 libspinlock_la_LIBADD = $(NANOSLEEP_LIBS)
 # spinlock also needs NumCPUs, from libsysinfo, which in turn needs liblogging
@@ -312,16 +298,6 @@ low_level_alloc_unittest_SOURCES = src/base/low_level_alloc.cc \
 # We don't need that functionality here, so we turn it off to reduce deps.
 low_level_alloc_unittest_CXXFLAGS = -DNO_TCMALLOC_SAMPLES
 low_level_alloc_unittest_LDADD = $(LIBSPINLOCK) libmaybe_threads.la
-
-TESTS += atomicops_unittest
-ATOMICOPS_UNITTEST_INCLUDES = src/base/atomicops.h \
-                              src/base/atomicops-internals-macosx.h \
-                              src/base/atomicops-internals-windows.h \
-                              src/base/atomicops-internals-x86.h \
-                              $(LOGGING_INCLUDES)
-atomicops_unittest_SOURCES = src/tests/atomicops_unittest.cc \
-                             $(ATOMICOPS_UNITTEST_INCLUDES)
-atomicops_unittest_LDADD = $(LIBSPINLOCK)
 
 
 ### ------- stack trace
@@ -369,7 +345,7 @@ STACKTRACE_UNITTEST_INCLUDES = src/config_for_unittests.h \
                                $(LOGGING_INCLUDES)
 stacktrace_unittest_SOURCES = src/tests/stacktrace_unittest.cc \
                               $(STACKTRACE_UNITTEST_INCLUDES)
-stacktrace_unittest_LDADD = libstacktrace.la liblogging.la libfake_stacktrace_scope.la
+stacktrace_unittest_LDADD = libstacktrace.la liblogging.la libfake_stacktrace_scope.la $(STACKTRACE_UNITTEST_LIBS)
 
 ### Documentation
 dist_doc_DATA +=
@@ -668,7 +644,7 @@ malloc_extension_test_LDADD = $(LIBTCMALLOC_MINIMAL) $(PTHREAD_LIBS)
 # in configure.ac:36?
 if !MINGW
 TESTS += malloc_extension_c_test
-malloc_extension_c_test_SOURCES = src/tests/malloc_extension_c_test.c \
+malloc_extension_c_test_SOURCES = src/tests/malloc_extension_c_test.cc \
                                   src/gperftools/malloc_extension.h \
                                   src/gperftools/malloc_extension_c.h
 malloc_extension_c_test_CFLAGS = $(PTHREAD_CFLAGS) $(AM_CFLAGS)
@@ -850,7 +826,7 @@ endif WITH_DEBUGALLOC
 if !MINGW
 noinst_LTLIBRARIES += librun_benchmark.la
 librun_benchmark_la_SOURCES = \
-	benchmark/run_benchmark.c benchmark/run_benchmark.h
+	benchmark/run_benchmark.cc benchmark/run_benchmark.h
 
 noinst_PROGRAMS += malloc_bench malloc_bench_shared \
 	binary_trees binary_trees_shared
@@ -901,13 +877,10 @@ S_TCMALLOC_INCLUDES = $(S_TCMALLOC_MINIMAL_INCLUDES) \
                       $(LOGGING_INCLUDES) \
                       src/addressmap-inl.h \
                       src/raw_printer.h \
-                      src/base/elfcore.h \
                       src/base/googleinit.h \
-                      src/base/linux_syscall_support.h \
                       src/base/linuxthreads.h \
                       src/base/stl_allocator.h \
                       src/base/sysinfo.h \
-                      src/base/thread_lister.h \
                       src/heap-profile-table.h \
                       src/heap-profile-stats.h \
                       src/maybe_emergency_malloc.h \
@@ -934,8 +907,7 @@ if WITH_HEAP_CHECKER
 # (Note this is added to libtcmalloc.la, not libtcmalloc_internal.la,
 # but that's ok; the internal/external distinction is only useful for
 # cygwin, and cygwin doesn't use HEAP_CHECKER anyway.)
-HEAP_CHECKER_SOURCES = src/base/thread_lister.c \
-                       src/base/linuxthreads.cc \
+HEAP_CHECKER_SOURCES = src/base/linuxthreads.cc \
                        src/heap-checker.cc \
                        src/heap-checker-bcad.cc
 MAYBE_NO_HEAP_CHECK =
@@ -1149,14 +1121,6 @@ endif WITH_HEAP_PROFILER
 
 if WITH_HEAP_CHECKER
 
-TESTS += heap-checker_unittest.sh$(EXEEXT)
-heap_checker_unittest_sh_SOURCES = src/tests/heap-checker_unittest.sh
-noinst_SCRIPTS += $(heap_checker_unittest_sh_SOURCES)
-heap-checker_unittest.sh$(EXEEXT): $(top_srcdir)/$(heap_checker_unittest_sh_SOURCES) \
-                                   heap-checker_unittest
-	rm -f $@
-	cp -p $(top_srcdir)/$(heap_checker_unittest_sh_SOURCES) $@
-
 TESTS += heap-checker-death_unittest.sh$(EXEEXT)
 heap_checker_death_unittest_sh_SOURCES = src/tests/heap-checker-death_unittest.sh
 noinst_SCRIPTS += $(top_srcdir)/$(heap_checker_death_unittest_sh_SOURCES)
@@ -1166,7 +1130,7 @@ heap-checker-death_unittest.sh$(EXEEXT): $(heap_checker_death_unittest_sh_SOURCE
 	cp -p $(top_srcdir)/$(heap_checker_death_unittest_sh_SOURCES) $@
 
 # These are sub-programs used by heap-checker_unittest.sh
-noinst_PROGRAMS += heap-checker_unittest
+TESTS += heap-checker_unittest
 HEAP_CHECKER_UNITTEST_INCLUDES = src/config_for_unittests.h \
                                  src/memory_region_map.h \
                                  src/base/commandlineflags.h \
@@ -1266,15 +1230,7 @@ endif WITH_HEAP_PROFILER
 
 if WITH_HEAP_CHECKER
 
-TESTS += heap-checker_debug_unittest.sh$(EXEEXT)
-heap_checker_debug_unittest_sh_SOURCES = src/tests/heap-checker_unittest.sh
-heap-checker_debug_unittest.sh$(EXEEXT): $(top_srcdir)/$(heap_checker_unittest_sh_SOURCES) \
-                                   heap-checker_debug_unittest
-	rm -f $@
-	cp -p $(top_srcdir)/$(heap_checker_unittest_sh_SOURCES) $@
-
-# These are sub-programs used by heap-checker_debug_unittest.sh
-noinst_PROGRAMS += heap-checker_debug_unittest
+TESTS += heap-checker_debug_unittest
 heap_checker_debug_unittest_SOURCES = $(heap_checker_unittest_SOURCES)
 heap_checker_debug_unittest_CXXFLAGS = $(heap_checker_unittest_CXXFLAGS)
 heap_checker_debug_unittest_LDFLAGS = $(heap_checker_unittest_LDFLAGS)
@@ -1434,10 +1390,11 @@ endif WITH_HEAP_PROFILER_OR_CHECKER
 
 
 # Do the weakening on some exported libtcmalloc symbols.
-install-exec-local: all-local
-all-local: $(LIBS_TO_WEAKEN)
+run-weaken: all-am
 	for la in $(LIBS_TO_WEAKEN); do lib=".libs/`basename $$la .la`.a"; [ ! -f "$$lib" ] || $(WEAKEN) "$$lib"; done
 
+install-exec-local: run-weaken
+all: run-weaken
 
 # This should always include $(TESTS), but may also include other
 # binaries that you compile but don't want automatically installed.
@@ -1492,10 +1449,15 @@ libprofiler.pc: libtcmalloc.pc
 libtool: $(LIBTOOL_DEPS)
 	$(SHELL) ./config.status --recheck
 
-@GENERATE_CHANGELOG_RULES@
+$(top_distdir)/ChangeLog:
+	if test ! -f $(top_srcdir)/ChangeLog ; \
+	  then git --git-dir=$(top_srcdir)/.git --work-tree=$(top_srcdir) \
+	        log --stat -M -C --name-status --no-color \
+	       | fmt --split-only >$(top_distdir)/ChangeLog; \
+	  else cp $(top_srcdir)/ChangeLog $(top_distdir)/ChangeLog; fi
 
 # Windows wants write permission to .vcxproj files and maybe even sln files.
-dist-hook: dist-ChangeLog
+dist-hook: $(top_distdir)/ChangeLog
 	test -e "$(distdir)/vsprojects" \
 	   && chmod -R u+w $(distdir)/*.sln $(distdir)/vsprojects/
 
@@ -1505,4 +1467,5 @@ EXTRA_DIST = packages/rpm.sh packages/rpm/rpm.spec packages/deb.sh packages/deb 
              src/windows/config.h src/windows/gperftools/tcmalloc.h \
              docs/pprof.see_also src/windows/TODO \
              $(WINDOWS_PROJECTS) \
-             src/solaris/libstdc++.la
+             src/solaris/libstdc++.la \
+             CMakeLists.txt cmake

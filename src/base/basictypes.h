@@ -255,6 +255,11 @@ inline void bit_store(Dest *dest, const Source *source) {
 # define ATTRIBUTE_NOINLINE
 #endif
 
+#ifdef _MSC_VER
+#undef ATTRIBUTE_NOINLINE
+#define ATTRIBUTE_NOINLINE __declspec(noinline)
+#endif
+
 #if defined(HAVE___ATTRIBUTE__) && defined(__ELF__)
 # define ATTRIBUTE_VISIBILITY_HIDDEN __attribute__((visibility("hidden")))
 #else
@@ -300,7 +305,7 @@ inline void bit_store(Dest *dest, const Source *source) {
 # define HAVE_ATTRIBUTE_SECTION_START 1
 
 #elif defined(HAVE___ATTRIBUTE__) && defined(__MACH__)
-# define ATTRIBUTE_SECTION(name) __attribute__ ((section ("__TEXT, " #name)))
+# define ATTRIBUTE_SECTION(name) __attribute__ ((section ("__TEXT, " #name))) __attribute__((noinline))
 
 #include <mach-o/getsect.h>
 #include <mach-o/dyld.h>
@@ -385,7 +390,7 @@ class AssignAttributeStartEnd {
 #   define CACHELINE_ALIGNED __attribute__((aligned(256)))
 # elif (defined(__riscv) && __riscv_xlen == 64)
 #   define CACHELINE_ALIGNED __attribute__((aligned(64)))
-# elif (defined(__e2k__))
+# elif defined(__loongarch64)
 #   define CACHELINE_ALIGNED __attribute__((aligned(64)))
 # else
 #   error Could not determine cache line length - unknown architecture
