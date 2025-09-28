@@ -35,9 +35,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// We only test this on Linux because frame skip count works there and
-// doesn't on FreeBSD.
-#if __linux__
+// Correctly capturing backtrace from signal handler is most
+// brittle. A number of configurations on Linux work, but not
+// all. Same applies to BSDs. But lets somewhat broadly ask those
+// setups to be tested. In general, if right backtraces are needed for
+// CPU profiler, this test should pass as well.
+#if __linux__ || (__FreeBSD__ && (__x86_64__ || __i386__)) || __NetBSD__
 #include <signal.h>
 #include <sys/time.h>
 #define TEST_UCONTEXT_BITS 1
@@ -54,7 +57,12 @@
 #include <gperftools/stacktrace.h>
 #include "tests/testutil.h"
 
-namespace {
+static bool verbosity_setup = ([] () {
+  // Lets try have more details printed for test by asking for verbose
+  // option.
+  setenv("TCMALLOC_STACKTRACE_METHOD_VERBOSE", "t", 0);
+  return true;
+})();
 
 // Obtain a backtrace, verify that the expected callers are present in the
 // backtrace, and maybe print the backtrace to stdout.
@@ -123,6 +131,8 @@ void CheckRetAddrIsInFunction(void *ret_addr, const AddressRange &range)
 }
 
 //-----------------------------------------------------------------------//
+
+extern "C" {
 
 #if TEST_UCONTEXT_BITS
 
@@ -207,6 +217,21 @@ int ATTRIBUTE_NOINLINE CaptureLeafPlain(void **stack, int stack_len) {
   DECLARE_ADDRESS_LABEL(start);
 
   int size = GetStackTrace(stack, stack_len, 0);
+
+  printf("Obtained %d stack frames.\n", size);
+  CHECK_GE(size, 1);
+  CHECK_LE(size, stack_len);
+
+  DECLARE_ADDRESS_LABEL(end);
+
+  return size;
+}
+
+int ATTRIBUTE_NOINLINE CaptureLeafPlainEmptyUCP(void **stack, int stack_len) {
+  INIT_ADDRESS_RANGE(CheckStackTraceLeaf, start, end, &expected_range[0]);
+  DECLARE_ADDRESS_LABEL(start);
+
+  int size = GetStackTraceWithContext(stack, stack_len, 0, nullptr);
 
   printf("Obtained %d stack frames.\n", size);
   CHECK_GE(size, 1);
@@ -319,10 +344,16 @@ void ATTRIBUTE_NOINLINE CheckStackTrace(int i) {
   DECLARE_ADDRESS_LABEL(end);
 }
 
-}  // namespace
+}  // extern "C"
+
 //-----------------------------------------------------------------------//
 
 int main(int argc, char ** argv) {
+  CheckStackTrace(0);
+  printf("PASS\n");
+
+  printf("Will test capturing stack trace with nullptr ucontext\n");
+  leaf_capture_fn = CaptureLeafPlainEmptyUCP;
   CheckStackTrace(0);
   printf("PASS\n");
 

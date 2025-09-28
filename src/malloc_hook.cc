@@ -50,7 +50,6 @@
 #include "base/logging.h"
 #include "base/spinlock.h"
 #include "maybe_emergency_malloc.h"
-#include "maybe_threads.h"
 #include "malloc_hook-inl.h"
 #include <gperftools/malloc_hook.h>
 
@@ -91,7 +90,7 @@ namespace {
 
 void RemoveInitialHooksAndCallInitializers();  // below.
 
-pthread_once_t once = PTHREAD_ONCE_INIT;
+tcmalloc::TrivialOnce once{base::LINKER_INITIALIZED};
 
 // These hooks are installed in MallocHook as the only initial hooks.  The first
 // hook that is called will run RemoveInitialHooksAndCallInitializers (see the
@@ -115,7 +114,7 @@ pthread_once_t once = PTHREAD_ONCE_INIT;
 //   RemoveInitialHooksAndCallInitializers.
 
 void InitialNewHook(const void* ptr, size_t size) {
-  perftools_pthread_once(&once, &RemoveInitialHooksAndCallInitializers);
+  once.RunOnce(&RemoveInitialHooksAndCallInitializers);
   MallocHook::InvokeNewHook(ptr, size);
 }
 
@@ -125,12 +124,12 @@ void InitialPreMMapHook(const void* start,
                                int flags,
                                int fd,
                                off_t offset) {
-  perftools_pthread_once(&once, &RemoveInitialHooksAndCallInitializers);
+  once.RunOnce(&RemoveInitialHooksAndCallInitializers);
   MallocHook::InvokePreMmapHook(start, size, protection, flags, fd, offset);
 }
 
 void InitialPreSbrkHook(ptrdiff_t increment) {
-  perftools_pthread_once(&once, &RemoveInitialHooksAndCallInitializers);
+  once.RunOnce(&RemoveInitialHooksAndCallInitializers);
   MallocHook::InvokePreSbrkHook(increment);
 }
 
@@ -166,16 +165,15 @@ namespace base { namespace internal {
 static SpinLock hooklist_spinlock(base::LINKER_INITIALIZED);
 
 template <typename T>
-bool HookList<T>::Add(T value_as_t) {
-  uintptr_t value = bit_cast<uintptr_t>(value_as_t);
-  if (value == 0) {
+bool HookList<T>::Add(T value) {
+  if (value == T{}) {
     return false;
   }
   SpinLockHolder l(&hooklist_spinlock);
   // Find the first slot in data that is 0.
   int index = 0;
   while ((index < kHookListMaxValues) &&
-         cast_priv_data(index)->load(std::memory_order_relaxed) != 0) {
+         cast_priv_data(index)->load(std::memory_order_relaxed) != T{}) {
     ++index;
   }
   if (index == kHookListMaxValues) {
@@ -200,21 +198,21 @@ void HookList<T>::FixupPrivEndLocked() {
 }
 
 template <typename T>
-bool HookList<T>::Remove(T value_as_t) {
-  if (value_as_t == 0) {
+bool HookList<T>::Remove(T value) {
+  if (value == T{}) {
     return false;
   }
   SpinLockHolder l(&hooklist_spinlock);
   uintptr_t hooks_end = priv_end.load(std::memory_order_relaxed);
   int index = 0;
-  while (index < hooks_end && value_as_t != bit_cast<T>(
-           cast_priv_data(index)->load(std::memory_order_relaxed))) {
+  while (index < hooks_end
+         && value != cast_priv_data(index)->load(std::memory_order_relaxed)) {
     ++index;
   }
   if (index == hooks_end) {
     return false;
   }
-  cast_priv_data(index)->store(0, std::memory_order_relaxed);
+  cast_priv_data(index)->store(T{}, std::memory_order_relaxed);
   FixupPrivEndLocked();
   return true;
 }
@@ -224,9 +222,9 @@ int HookList<T>::Traverse(T* output_array, int n) const {
   uintptr_t hooks_end = priv_end.load(std::memory_order_acquire);
   int actual_hooks_end = 0;
   for (int i = 0; i < hooks_end && n > 0; ++i) {
-    uintptr_t data = cast_priv_data(i)->load(std::memory_order_acquire);
-    if (data != 0) {
-      *output_array++ = bit_cast<T>(data);
+    T data = cast_priv_data(i)->load(std::memory_order_acquire);
+    if (data != T{}) {
+      *output_array++ = data;
       ++actual_hooks_end;
       --n;
     }
@@ -235,31 +233,30 @@ int HookList<T>::Traverse(T* output_array, int n) const {
 }
 
 template <typename T>
-T HookList<T>::ExchangeSingular(T value_as_t) {
-  uintptr_t value = bit_cast<uintptr_t>(value_as_t);
-  uintptr_t old_value;
+T HookList<T>::ExchangeSingular(T value) {
+  T old_value;
   SpinLockHolder l(&hooklist_spinlock);
   old_value = cast_priv_data(kHookListSingularIdx)->load(std::memory_order_relaxed);
   cast_priv_data(kHookListSingularIdx)->store(value, std::memory_order_relaxed);
-  if (value != 0) {
+  if (value != T{}) {
     priv_end.store(kHookListSingularIdx + 1, std::memory_order_relaxed);
   } else {
     FixupPrivEndLocked();
   }
-  return bit_cast<T>(old_value);
+  return old_value;
 }
 
 // Explicit instantiation for malloc_hook_test.cc.  This ensures all the methods
 // are instantiated.
 template struct HookList<MallocHook::NewHook>;
 
-HookList<MallocHook::NewHook> new_hooks_{reinterpret_cast<uintptr_t>(InitialNewHook)};
+HookList<MallocHook::NewHook> new_hooks_{InitialNewHook};
 HookList<MallocHook::DeleteHook> delete_hooks_;
-HookList<MallocHook::PreMmapHook> premmap_hooks_{reinterpret_cast<uintptr_t>(InitialPreMMapHook)};
+HookList<MallocHook::PreMmapHook> premmap_hooks_{InitialPreMMapHook};
 HookList<MallocHook::MmapHook> mmap_hooks_;
 HookList<MallocHook::MunmapHook> munmap_hooks_;
 HookList<MallocHook::MremapHook> mremap_hooks_;
-HookList<MallocHook::PreSbrkHook> presbrk_hooks_{reinterpret_cast<uintptr_t>(InitialPreSbrkHook)};
+HookList<MallocHook::PreSbrkHook> presbrk_hooks_{InitialPreSbrkHook};
 HookList<MallocHook::SbrkHook> sbrk_hooks_;
 
 // These lists contain either 0 or 1 hooks.

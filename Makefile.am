@@ -22,14 +22,12 @@ AM_CXXFLAGS =
 if GCC
 AM_CXXFLAGS += -Wall -Wwrite-strings -Woverloaded-virtual \
                -Wno-sign-compare
-
-# x86-es (starting from gcc-4.6 as per earlier comment) have
-# -momit-leaf-frame-pointer by default. And on i386 we "traditionally"
-# used to re-enable frame pointers. So lets keep doing it.
-if I386
-AM_CXXFLAGS += -fno-omit-frame-pointer
-endif I386
 endif GCC
+
+if ENABLE_FP_FLAGS
+AM_CXXFLAGS += -fno-omit-frame-pointer -momit-leaf-frame-pointer
+endif
+
 if HAVE_W_NO_UNUSED_RESULT
 AM_CXXFLAGS += -Wno-unused-result
 endif HAVE_W_NO_UNUSED_RESULT
@@ -44,19 +42,9 @@ endif HAVE_F_ALIGNED_NEW
 # Cygwin and MinGW.  LIBSTDCXX_LA_LINKER_FLAG is used to fix a Solaris bug.
 AM_LDFLAGS = -no-undefined $(LIBSTDCXX_LA_LINKER_FLAG)
 
-# These are x86-specific, having to do with frame-pointers.  In
-# particular, some x86_64 systems do not insert frame pointers by
-# default (all i386 systems that I know of, do.  I don't know about
-# non-x86 chips).  We need to tell perftools what to do about that.
-if OMIT_FP_BY_DEFAULT
-if !ENABLE_FRAME_POINTERS
-AM_CXXFLAGS += -DNO_FRAME_POINTER
-endif !ENABLE_FRAME_POINTERS
-endif OMIT_FP_BY_DEFAULT
-
 # respect --enable-frame-pointers regardless of architecture
 if ENABLE_FRAME_POINTERS
-AM_CXXFLAGS += -fno-omit-frame-pointer
+AM_CXXFLAGS += -fno-omit-frame-pointer -DFORCED_FRAME_POINTERS
 endif ENABLE_FRAME_POINTERS
 
 # For windows systems (at least, mingw), we need to tell all our
@@ -111,14 +99,6 @@ noinst_HEADERS = src/gperftools/tcmalloc.h.in
 # perftoolsincludedir.
 googleincludedir = $(includedir)/google
 googleinclude_HEADERS =				\
-   src/google/heap-checker.h			\
-   src/google/heap-profiler.h			\
-   src/google/malloc_extension.h		\
-   src/google/malloc_extension_c.h		\
-   src/google/malloc_hook.h			\
-   src/google/malloc_hook_c.h			\
-   src/google/profiler.h			\
-   src/google/stacktrace.h			\
    src/google/tcmalloc.h
 
 # This is for HTML and other documentation you want to install.
@@ -182,16 +162,11 @@ SYSINFO_INCLUDES = src/base/sysinfo.h \
                    src/getenv_safe.h \
                    src/base/logging.h \
                    src/base/commandlineflags.h \
-                   src/base/arm_instruction_set_select.h \
                    src/base/basictypes.h
 noinst_LTLIBRARIES += libsysinfo.la
 libsysinfo_la_SOURCES = src/base/sysinfo.cc \
                         $(SYSINFO_INCLUDES)
 libsysinfo_la_LIBADD = $(NANOSLEEP_LIBS)
-
-noinst_LTLIBRARIES += libmaybe_threads.la
-# .cc is conditionally added below
-libmaybe_threads_la_SOURCES = src/maybe_threads.h
 
 # For MinGW, we use also have to use libwindows Luckily, we need the
 # windows.a library in exactly the same place we need spinlock.a
@@ -248,10 +223,6 @@ libsysinfo_la_LIBADD += -lshlwapi
 
 # patch_functions.cc #includes tcmalloc.cc, so no need to link it in.
 TCMALLOC_CC =
-# windows has its own system for threads and system memory allocation.
-if HAVE_PTHREAD_DESPITE_ASKING_FOR
-libmaybe_threads_la_SOURCES += src/maybe_threads.cc
-endif
 SYSTEM_ALLOC_CC =
 else !MINGW
 SPINLOCK_INCLUDES = src/base/spinlock.h \
@@ -266,7 +237,6 @@ libspinlock_la_LIBADD = $(NANOSLEEP_LIBS)
 LIBSPINLOCK = libspinlock.la libsysinfo.la liblogging.la
 
 TCMALLOC_CC = src/tcmalloc.cc
-libmaybe_threads_la_SOURCES += src/maybe_threads.cc
 SYSTEM_ALLOC_CC = src/system-alloc.cc
 endif !MINGW
 
@@ -297,7 +267,7 @@ low_level_alloc_unittest_SOURCES = src/base/low_level_alloc.cc \
 # By default, MallocHook takes stack traces for use by the heap-checker.
 # We don't need that functionality here, so we turn it off to reduce deps.
 low_level_alloc_unittest_CXXFLAGS = -DNO_TCMALLOC_SAMPLES
-low_level_alloc_unittest_LDADD = $(LIBSPINLOCK) libmaybe_threads.la
+low_level_alloc_unittest_LDADD = $(LIBSPINLOCK)
 
 
 ### ------- stack trace
@@ -314,7 +284,6 @@ S_STACKTRACE_INCLUDES = src/stacktrace_impl_setup-inl.h \
 			src/stacktrace_powerpc-inl.h \
 			src/stacktrace_powerpc-darwin-inl.h \
 			src/stacktrace_powerpc-linux-inl.h \
-			src/stacktrace_x86-inl.h \
 			src/stacktrace_win32-inl.h \
 			src/stacktrace_instrument-inl.h \
                         src/base/elf_mem_image.h \
@@ -323,6 +292,7 @@ S_STACKTRACE_INCLUDES = src/stacktrace_impl_setup-inl.h \
 SG_STACKTRACE_INCLUDES = src/gperftools/stacktrace.h
 STACKTRACE_INCLUDES = $(S_STACKTRACE_INCLUDES) $(SG_STACKTRACE_INCLUDES)
 perftoolsinclude_HEADERS += $(SG_STACKTRACE_INCLUDES)
+googleinclude_HEADERS += src/google/stacktrace.h
 
 ### Making the library
 noinst_LTLIBRARIES += libstacktrace.la
@@ -346,6 +316,8 @@ STACKTRACE_UNITTEST_INCLUDES = src/config_for_unittests.h \
 stacktrace_unittest_SOURCES = src/tests/stacktrace_unittest.cc \
                               $(STACKTRACE_UNITTEST_INCLUDES)
 stacktrace_unittest_LDADD = libstacktrace.la liblogging.la libfake_stacktrace_scope.la $(STACKTRACE_UNITTEST_LIBS)
+# nice to have. Allows glibc's backtrace_symbols to work.
+stacktrace_unittest_LDFLAGS = -export-dynamic
 
 ### Documentation
 dist_doc_DATA +=
@@ -399,11 +371,13 @@ S_TCMALLOC_MINIMAL_INCLUDES = src/common.h \
                               src/tcmalloc_guard.h \
                               src/base/commandlineflags.h \
                               src/base/basictypes.h \
+                              src/safe_strerror.h \
                               src/pagemap.h \
                               src/sampler.h \
                               src/central_freelist.h \
                               src/linked_list.h \
                               src/libc_override.h \
+                              src/libc_override_aix.h \
                               src/libc_override_gcc_and_weak.h \
                               src/libc_override_glibc.h \
                               src/libc_override_osx.h \
@@ -426,6 +400,10 @@ SG_TCMALLOC_MINIMAL_INCLUDES = src/gperftools/malloc_hook.h \
                                src/gperftools/nallocx.h
 TCMALLOC_MINIMAL_INCLUDES = $(S_TCMALLOC_MINIMAL_INCLUDES) $(SG_TCMALLOC_MINIMAL_INCLUDES) $(SG_STACKTRACE_INCLUDES)
 perftoolsinclude_HEADERS += $(SG_TCMALLOC_MINIMAL_INCLUDES)
+googleinclude_HEADERS += src/google/malloc_hook.h \
+                         src/google/malloc_hook_c.h \
+                         src/google/malloc_extension.h \
+                         src/google/malloc_extension_c.h
 
 ### Making the library
 
@@ -434,6 +412,7 @@ libtcmalloc_minimal_internal_la_SOURCES = src/common.cc \
                                           src/internal_logging.cc \
                                           $(SYSTEM_ALLOC_CC) \
                                           src/memfs_malloc.cc \
+                                          src/safe_strerror.cc \
                                           src/central_freelist.cc \
                                           src/page_heap.cc \
                                           src/sampler.cc \
@@ -451,7 +430,7 @@ libtcmalloc_minimal_internal_la_CXXFLAGS = -DNO_TCMALLOC_SAMPLES \
                                            -DNDEBUG \
                                            $(AM_CXXFLAGS)
 libtcmalloc_minimal_internal_la_LDFLAGS =  $(AM_LDFLAGS)
-libtcmalloc_minimal_internal_la_LIBADD =  $(LIBSPINLOCK) libmaybe_threads.la
+libtcmalloc_minimal_internal_la_LIBADD =  $(LIBSPINLOCK)
 
 lib_LTLIBRARIES += libtcmalloc_minimal.la
 WINDOWS_PROJECTS += vsprojects/libtcmalloc_minimal/libtcmalloc_minimal.vcxproj
@@ -486,11 +465,9 @@ LIBS_TO_WEAKEN += libtcmalloc_minimal.la
 ##                           src/malloc_hook_mmap_linux.h \
 ##                           src/malloc_hook_mmap_freebsd.h \
 ##                           src/base/basictypes.h \
-##                           src/maybe_threads.h
 ## malloc_unittest_SOURCES = src/tests/tcmalloc_unittest.cc \
 ##                           src/malloc_hook.cc \
 ##                           src/malloc_extension.cc \
-##                           $(MAYBE_THREADS_CC) \
 ##                           $(MALLOC_UNITTEST_INCLUDES)
 ## malloc_unittest_CXXFLAGS = $(PTHREAD_CFLAGS) $(AM_CXXFLAGS)
 ## malloc_unittest_LDFLAGS = $(PTHREAD_CFLAGS)
@@ -524,7 +501,7 @@ tcm_min_asserts_unittest_SOURCES = src/tests/tcmalloc_unittest.cc \
 tcm_min_asserts_unittest_CXXFLAGS = -DNO_TCMALLOC_SAMPLES -DNO_HEAP_CHECK \
                                     $(PTHREAD_CFLAGS) $(AM_CXXFLAGS)
 tcm_min_asserts_unittest_LDFLAGS = $(PTHREAD_CFLAGS) $(TCMALLOC_FLAGS)
-tcm_min_asserts_unittest_LDADD = $(LIBSPINLOCK) libmaybe_threads.la \
+tcm_min_asserts_unittest_LDADD = $(LIBSPINLOCK) \
                                   liblogging.la $(PTHREAD_LIBS)
 
 TESTS += tcmalloc_minimal_large_unittest
@@ -539,27 +516,6 @@ tcmalloc_minimal_large_heap_fragmentation_unittest_SOURCES = src/tests/large_hea
 tcmalloc_minimal_large_heap_fragmentation_unittest_CXXFLAGS = $(PTHREAD_CFLAGS) $(AM_CXXFLAGS)
 tcmalloc_minimal_large_heap_fragmentation_unittest_LDFLAGS = $(PTHREAD_CFLAGS) $(TCMALLOC_FLAGS)
 tcmalloc_minimal_large_heap_fragmentation_unittest_LDADD = $(LIBTCMALLOC_MINIMAL) $(PTHREAD_LIBS)
-
-# This tests it works to LD_PRELOAD libtcmalloc (tests maybe_threads.cc)
-# In theory this should work under mingw, but mingw has trouble running
-# shell scripts that end in .exe.  And it doesn't seem to build shared
-# libraries anyway (so can't be LD_PRELOADed) -- in fact, anybody who
-# chooses not to build shared libraries won't be able to run this test.
-# TODO(csilvers): figure out how to nix ".exe" or otherwise work under mingw
-if !MINGW
-if !ENABLE_STATIC
-TESTS += maybe_threads_unittest.sh$(EXEEXT)
-maybe_threads_unittest_sh_SOURCES = src/tests/maybe_threads_unittest.sh
-noinst_SCRIPTS += $(maybe_threads_unittest_sh_SOURCES)
-# This script preloads libtcmalloc, and calls two other binaries as well
-# TODO(csilvers): replace by 'if ! cmp $^ $@ >/dev/null 2>&; then ...; fi'
-maybe_threads_unittest.sh$(EXEEXT): $(top_srcdir)/$(maybe_threads_unittest_sh_SOURCES) \
-                           $(LIBTCMALLOC_MINIMAL) \
-                           low_level_alloc_unittest
-	rm -f $@
-	cp -p $(top_srcdir)/$(maybe_threads_unittest_sh_SOURCES) $@
-endif !ENABLE_STATIC
-endif !MINGW
 
 # These all tests components of tcmalloc_minimal
 
@@ -648,12 +604,8 @@ malloc_extension_c_test_SOURCES = src/tests/malloc_extension_c_test.cc \
                                   src/gperftools/malloc_extension.h \
                                   src/gperftools/malloc_extension_c.h
 malloc_extension_c_test_CFLAGS = $(PTHREAD_CFLAGS) $(AM_CFLAGS)
-# -ansi here is just to help ensure the code is bog-standard C.
-if GCC
-malloc_extension_c_test_CFLAGS += -ansi
-endif GCC
 malloc_extension_c_test_LDFLAGS = $(PTHREAD_CFLAGS) $(TCMALLOC_FLAGS)
-malloc_extension_c_test_LDADD = $(LIBTCMALLOC_MINIMAL) $(PTHREAD_LIBS) -lstdc++ -lm
+malloc_extension_c_test_LDADD = libtcmalloc_minimal.la
 endif !MINGW
 
 if !MINGW
@@ -689,6 +641,11 @@ pagemap_unittest_SOURCES = src/tests/pagemap_unittest.cc \
 pagemap_unittest_CXXFLAGS = $(PTHREAD_CFLAGS) $(AM_CXXFLAGS)
 pagemap_unittest_LDFLAGS = $(PTHREAD_CFLAGS) $(TCMALLOC_FLAGS)
 pagemap_unittest_LDADD = $(LIBTCMALLOC_MINIMAL) $(PTHREAD_LIBS)
+
+TESTS += safe_strerror_test
+safe_strerror_test_SOURCES = src/tests/safe_strerror_test.cc \
+                             src/safe_strerror.cc
+safe_strerror_test_LDADD = liblogging.la
 
 TESTS += realloc_unittest
 WINDOWS_PROJECTS += vsprojects/realloc_unittest/realloc_unittest.vcxproj
@@ -852,6 +809,12 @@ malloc_bench_shared_full_CXXFLAGS = $(PTHREAD_CFLAGS) $(AM_CXXFLAGS)
 malloc_bench_shared_full_LDFLAGS = $(PTHREAD_CFLAGS) $(TCMALLOC_FLAGS)
 malloc_bench_shared_full_LDADD = librun_benchmark.la libtcmalloc.la $(PTHREAD_LIBS)
 
+noinst_PROGRAMS += unwind_bench
+unwind_bench_SOURCES = benchmark/unwind_bench.cc
+unwind_bench_CXXFLAGS = $(PTHREAD_CFLAGS) $(AM_CXXFLAGS) $(NO_BUILTIN_CXXFLAGS)
+unwind_bench_LDFLAGS = $(PTHREAD_CFLAGS) $(TCMALLOC_FLAGS)
+unwind_bench_LDADD = librun_benchmark.la libtcmalloc.la $(PTHREAD_LIBS)
+
 endif WITH_HEAP_PROFILER_OR_CHECKER
 
 binary_trees_SOURCES = benchmark/binary_trees.cc
@@ -891,6 +854,8 @@ SG_TCMALLOC_INCLUDES = src/gperftools/heap-profiler.h \
 TCMALLOC_INCLUDES = $(S_TCMALLOC_INCLUDES) $(SG_TCMALLOC_MINIMAL_INCLUDES) \
 		    $(SG_TCMALLOC_INCLUDES) $(SG_STACKTRACE_INCLUDES)
 perftoolsinclude_HEADERS += $(SG_TCMALLOC_INCLUDES)
+googleinclude_HEADERS += src/google/heap-profiler.h \
+                         src/google/heap-checker.h
 
 if BUILD_EMERGENCY_MALLOC
 EMERGENCY_MALLOC_CC = src/emergency_malloc.cc src/emergency_malloc_for_stacktrace.cc
@@ -937,7 +902,7 @@ libtcmalloc_la_SOURCES = $(TCMALLOC_CC) $(TCMALLOC_INCLUDES) \
 libtcmalloc_la_CXXFLAGS = $(PTHREAD_CFLAGS) -DNDEBUG $(AM_CXXFLAGS) \
                           $(MAYBE_NO_HEAP_CHECK) $(EMERGENCY_MALLOC_DEFINE)
 libtcmalloc_la_LDFLAGS = $(PTHREAD_CFLAGS) -version-info @TCMALLOC_SO_VERSION@
-libtcmalloc_la_LIBADD = libtcmalloc_internal.la libmaybe_threads.la $(PTHREAD_LIBS)
+libtcmalloc_la_LIBADD = libtcmalloc_internal.la $(PTHREAD_LIBS)
 
 # same as above with without -DNDEBUG
 noinst_LTLIBRARIES += libtcmalloc_internal_with_asserts.la
@@ -953,7 +918,7 @@ libtcmalloc_with_asserts_la_SOURCES = $(libtcmalloc_la_SOURCES)
 libtcmalloc_with_asserts_la_CXXFLAGS =  $(PTHREAD_CFLAGS) $(AM_CXXFLAGS) \
                           $(MAYBE_NO_HEAP_CHECK) $(EMERGENCY_MALLOC_DEFINE)
 libtcmalloc_with_asserts_la_LDFLAGS = $(PTHREAD_CFLAGS)
-libtcmalloc_with_asserts_la_LIBADD = libtcmalloc_internal_with_asserts.la libmaybe_threads.la $(PTHREAD_LIBS)
+libtcmalloc_with_asserts_la_LIBADD = libtcmalloc_internal_with_asserts.la $(PTHREAD_LIBS)
 
 LIBTCMALLOC = libtcmalloc.la
 
@@ -1265,6 +1230,7 @@ SG_CPU_PROFILER_INCLUDES = src/gperftools/profiler.h
 CPU_PROFILER_INCLUDES = $(S_CPU_PROFILER_INCLUDES) $(SG_CPU_PROFILER_INCLUDES) \
 			$(SG_STACKTRACE_INCLUDES)
 perftoolsinclude_HEADERS += $(SG_CPU_PROFILER_INCLUDES)
+googleinclude_HEADERS += src/google/profiler.h
 
 ### Making the library
 lib_LTLIBRARIES += libprofiler.la
@@ -1272,7 +1238,7 @@ libprofiler_la_SOURCES = src/profiler.cc \
                          src/profile-handler.cc \
                          src/profiledata.cc \
                          $(CPU_PROFILER_INCLUDES)
-libprofiler_la_LIBADD = libstacktrace.la libmaybe_threads.la libfake_stacktrace_scope.la
+libprofiler_la_LIBADD = libstacktrace.la libfake_stacktrace_scope.la
 # We have to include ProfileData for profiledata_unittest
 CPU_PROFILER_SYMBOLS = '(ProfilerStart|ProfilerStartWithOptions|ProfilerStop|ProfilerFlush|ProfilerEnable|ProfilerDisable|ProfilingIsEnabledForAllThreads|ProfilerRegisterThread|ProfilerGetCurrentState|ProfilerState|ProfileData|ProfileHandler|ProfilerGetStackTrace)'
 libprofiler_la_LDFLAGS = -export-symbols-regex $(CPU_PROFILER_SYMBOLS) \
@@ -1409,9 +1375,21 @@ deb: dist-gzip packages/deb.sh packages/deb/*
 
 # http://linux.die.net/man/1/pkg-config, http://pkg-config.freedesktop.org/wiki
 pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = libtcmalloc.pc libtcmalloc_minimal.pc \
-                 libtcmalloc_debug.pc libtcmalloc_minimal_debug.pc \
-                 libprofiler.pc
+pkgconfig_DATA = libtcmalloc_minimal.pc
+if WITH_DEBUGALLOC
+pkgconfig_DATA += libtcmalloc_minimal_debug.pc
+endif WITH_DEBUGALLOC
+
+if WITH_HEAP_PROFILER_OR_CHECKER
+pkgconfig_DATA += libtcmalloc.pc
+if WITH_DEBUGALLOC
+pkgconfig_DATA += libtcmalloc_debug.pc
+endif WITH_DEBUGALLOC
+endif WITH_HEAP_PROFILER_OR_CHECKER
+
+if WITH_CPU_PROFILER
+pkgconfig_DATA += libprofiler.pc
+endif WITH_CPU_PROFILER
 CLEANFILES = $(pkgconfig_DATA)
 
 # I get the description and URL lines from the rpm spec. I use sed to
@@ -1445,9 +1423,6 @@ libtcmalloc_minimal_debug.pc: libtcmalloc.pc
 
 libprofiler.pc: libtcmalloc.pc
 	cat libtcmalloc.pc | sed s/-ltcmalloc/-lprofiler/ > "$@"
-
-libtool: $(LIBTOOL_DEPS)
-	$(SHELL) ./config.status --recheck
 
 $(top_distdir)/ChangeLog:
 	if test ! -f $(top_srcdir)/ChangeLog ; \

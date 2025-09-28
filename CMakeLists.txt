@@ -59,7 +59,6 @@ include(GNUInstallDirs)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(DefineTargetVariables)
-include(FindObjcopyWithWeaken)
 include(PCFromUContext)
 
 define_target_variables()
@@ -156,9 +155,6 @@ endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-# Check if we have an objcopy installed that supports -W
-find_objcopy_with_weaken()
-
 # AX_C___ATTRIBUTE__
 check_c_source_compiles("#include <stdlib.h>
                          static void foo(void) __attribute__ ((unused));
@@ -172,7 +168,7 @@ set(CMAKE_EXTRA_INCLUDE_FILES "elf.h")
 check_type_size("Elf32_Versym" ELF32_VERSYM LANGUAGE CXX) # for vdso_support.h
 set(CMAKE_EXTRA_INCLUDE_FILES)
 check_function_exists("sbrk" HAVE_SBRK) # for tcmalloc to get memory
-check_function_exists("__sbrk" HAVE_SBRK) # for tcmalloc to get memory
+check_function_exists("__sbrk" HAVE___SBRK) # for tcmalloc to get memory
 check_function_exists("geteuid" HAVE_GETEUID) # for turning off services when run as root
 check_function_exists("fork" HAVE_FORK) # for the pthread_atfork setup
 check_include_file("features.h" HAVE_FEATURES_H) # for vdso_support.h, Where __GLIBC__ is defined
@@ -249,16 +245,24 @@ if(gperftools_enable_libunwind)
   endif()
 endif()
 
-# On x86_64, we know that default is to omit frame pointer.
-if(x86_64)
-  set(omit_fp_by_default ON)
-endif()
-
 # See if the compiler supports -Wno-unused-result.
 # Newer ubuntu's turn on -D_FORTIFY_SOURCE=2, enabling
 # __attribute__((warn_unused_result)) for things like write(),
 # which we don't care about.
 check_c_compiler_flag("-Wno-unused-result" have_w_no_unused_result)
+
+check_c_compiler_flag("-fno-omit-frame-pointer -momit-leaf-frame-pointer" have_omit_leaf_fp)
+check_c_source_compiles("
+  #if !(__i386__ || __x86_64__ || __riscv || __aarch64__)
+  #error unsupported arch
+  #endif
+  int main() { return 0; }
+  "
+  use_omit_leaf_fp)
+
+if (use_omit_leaf_fp)
+  add_compile_options(-fno-omit-frame-pointer -momit-leaf-frame-pointer)
+endif()
 
 option(gperftools_dynamic_sized_delete_support
        "Try to build run-time switch for sized delete operator"
@@ -295,7 +299,7 @@ check_c_source_compiles("
   #include <unwind.h>
   int main()
   {
-#if __APPLE__
+#if __APPLE__ || __FreeBSD__
 #error OSX _Unwind_Backtrace recurses back to malloc
 #endif
     &_Unwind_Backtrace;
@@ -406,12 +410,6 @@ if(EXISTS /usr/sfw/lib/libstdc++.la)
   endif()
 endif()
 
-check_cxx_source_compiles(
-  "#include <string>
-     #include <vector>
-     int main() { pthread_t th; pthread_join(th, 0); return 0; }"
-  have_pthread_despite_asking_for)
-
 check_variable_exists("program_invocation_name" HAVE_PROGRAM_INVOCATION_NAME)
 
 if(MINGW)
@@ -438,26 +436,6 @@ if(GPERFTOOLS_BUILD_CPU_PROFILER OR
   set(WITH_STACK_TRACE ON)
 endif()
 
-# The following matters only if we're not using libunwind and if we
-# care about backtrace capturing, and frame pointers are not available
-# to capture backtraces. The idea is to warn user about less stable or
-# known bad configurations (e.g. encourage to install libunwind).
-if (NOT unwind_libs AND NOT gperftools_build_minimal AND
-    omit_fp_by_default AND NOT gperftools_enable_frame_pointers)
-  if(HAVE_UNWIND_BACKTRACE)
-    message(WARNING "No frame pointers and no libunwind. "
-                    "Using experimental backtrace capturing via libgcc. "
-                    "Expect crashy cpu profiler.")
-  elseif(gperftools_enable_stacktrace_via_backtrace)
-    message(WARNING "No frame pointers and no libunwind. "
-      "Using experimental backtrace(). "
-      "Expect crashy cpu profiler.")
-  else()
-    message(FATAL_ERROR "No frame pointers and no libunwind. "
-      "The compilation will fail.")
-  endif()
-endif()
-
 # Based on Makefile.am
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -472,13 +450,6 @@ endif()
 # These are good warnings to turn on by default.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wwrite-strings -Woverloaded-virtual -Wno-sign-compare")
-
-  # x86-es (starting from gcc-4.6 as per earlier comment) have
-  # -momit-leaf-frame-pointer by default. And on i386 we "traditionally"
-  # used to re-enable frame pointers. So lets keep doing it.
-  if(i386)
-    add_compile_options(-fno-omit-frame-pointer)
-  endif()
 endif()
 
 if(have_w_no_unused_result)
@@ -502,11 +473,7 @@ option(
   OFF)
 
 if(gperftools_enable_frame_pointers)
-  add_compile_options(-fno-omit-frame-pointer)
-endif()
-
-if(omit_fp_by_default AND NOT gperftools_enable_frame_pointers)
-  add_compile_definitions(NO_FRAME_POINTER)
+  add_compile_options(-fno-omit-frame-pointer -DFORCED_FRAME_POINTERS)
 endif()
 
 # For windows systems (at least, mingw), we need to tell all our
@@ -599,10 +566,6 @@ if(MINGW OR MSVC)
   # (We do this via a #pragma for msvc, but need to do it here for mingw).
   target_link_libraries(sysinfo shlwapi)
 
-  if(have_pthread_despite_asking_for)
-    add_library(maybe_threads STATIC src/maybe_threads.cc)
-    set(maybe_threads_lib maybe_threads)
-  endif()
 else()
   set(SPINLOCK_INCLUDES src/base/spinlock.h
           src/base/spinlock_internal.h)
@@ -615,8 +578,6 @@ else()
   set(TCMALLOC_CC "src/tcmalloc.cc")
   set(SYSTEM_ALLOC_CC "src/system-alloc.cc")
 
-  add_library(maybe_threads STATIC src/maybe_threads.cc)
-  set(maybe_threads_lib maybe_threads)
 endif()
 
 if(BUILD_TESTING)
@@ -641,7 +602,7 @@ if(BUILD_TESTING)
   # By default, MallocHook takes stack traces for use by the heap-checker.
   # We don't need that functionality here, so we turn it off to reduce deps.
   target_compile_definitions(low_level_alloc_unittest PRIVATE NO_TCMALLOC_SAMPLES)
-  target_link_libraries(low_level_alloc_unittest spinlock sysinfo logging ${maybe_threads_lib})
+  target_link_libraries(low_level_alloc_unittest spinlock sysinfo logging)
   add_test(low_level_alloc_unittest low_level_alloc_unittest)
 endif()
 
@@ -657,7 +618,6 @@ if(WITH_STACK_TRACE)
           src/stacktrace_powerpc-inl.h
           src/stacktrace_powerpc-darwin-inl.h
           src/stacktrace_powerpc-linux-inl.h
-          src/stacktrace_x86-inl.h
           src/stacktrace_win32-inl.h
           src/stacktrace_instrument-inl.h
           src/base/elf_mem_image.h
@@ -722,6 +682,7 @@ set(S_TCMALLOC_MINIMAL_INCLUDES src/common.h
         src/tcmalloc_guard.h
         src/base/commandlineflags.h
         src/base/basictypes.h
+        src/safe_strerror.h
         src/pagemap.h
         src/sampler.h
         src/central_freelist.h
@@ -756,6 +717,7 @@ set(libtcmalloc_minimal_internal_la_SOURCES src/common.cc
         src/internal_logging.cc
         ${SYSTEM_ALLOC_CC}
         src/memfs_malloc.cc
+        src/safe_strerror.cc
         src/central_freelist.cc
         src/page_heap.cc
         src/sampler.cc
@@ -771,7 +733,7 @@ add_library(tcmalloc_minimal_internal_object OBJECT ${libtcmalloc_minimal_intern
 # We #define NO_TCMALLOC_SAMPLES, since sampling is turned off for _minimal.
 target_compile_definitions(tcmalloc_minimal_internal_object PRIVATE NO_TCMALLOC_SAMPLES NO_HEAP_CHECK NDEBUG)
 add_library(tcmalloc_minimal_internal INTERFACE)
-target_link_libraries(tcmalloc_minimal_internal INTERFACE ${LIBSPINLOCK} ${maybe_threads_lib})
+target_link_libraries(tcmalloc_minimal_internal INTERFACE ${LIBSPINLOCK})
 target_sources(tcmalloc_minimal_internal INTERFACE $<TARGET_OBJECTS:tcmalloc_minimal_internal_object>)
 
 set(libtcmalloc_minimal_la_SOURCES ${TCMALLOC_CC} ${TCMALLOC_MINIMAL_INCLUDES})
@@ -786,7 +748,6 @@ endif()
 set_target_properties(tcmalloc_minimal PROPERTIES
         VERSION ${TCMALLOC_SO_VERSION}
         SOVERSION ${TCMALLOC_SO_VERSION})
-weaken_object(tcmalloc_minimal)
 install(TARGETS tcmalloc_minimal)
 if(GPERFTOOLS_BUILD_STATIC)
     add_library(tcmalloc_minimal_static STATIC ${libtcmalloc_minimal_internal_la_SOURCES})
@@ -799,7 +760,6 @@ if(GPERFTOOLS_BUILD_STATIC)
       set_target_properties(tcmalloc_minimal_static PROPERTIES
               OUTPUT_NAME tcmalloc_minimal)
     endif()
-    weaken_object(tcmalloc_minimal_static)
     install(TARGETS tcmalloc_minimal_static)
 endif()
 
@@ -842,13 +802,6 @@ if(BUILD_TESTING)
   target_link_libraries(
           tcmalloc_minimal_large_heap_fragmentation_unittest PUBLIC tcmalloc_minimal)
   add_test(tcmalloc_minimal_large_heap_fragmentation_unittest tcmalloc_minimal_large_heap_fragmentation_unittest)
-
-  if(BUILD_SHARED_LIBS AND NOT MINGW)
-    add_custom_target(maybe_threads_unittest
-            COMMAND src/tests/maybe_threads_unittest.sh
-            VERBATIM)
-    add_test(maybe_threads_unittest maybe_threads_unittest)
-  endif()
 
   if(MINGW OR MSVC)
     set(port_src src/windows/port.cc)
@@ -933,6 +886,10 @@ if(BUILD_TESTING)
   target_link_libraries(pagemap_unittest PUBLIC tcmalloc_minimal)
   add_test(pagemap_unittest pagemap_unittest)
 
+  add_executable(safe_strerror_test src/tests/safe_strerror_test.cc src/safe_strerror.cc)
+  target_link_libraries(safe_strerror_test logging)
+  add_test(safe_strerror_test safe_strerror_test)
+
   set(realloc_unittest_SOURCES src/tests/realloc_unittest.cc
           src/config_for_unittests.h
           src/base/logging.h)
@@ -961,7 +918,6 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
   target_compile_definitions(tcmalloc_minimal_debug PRIVATE ${libtcmalloc_minimal_la_DEFINES}
           TCMALLOC_FOR_DEBUGALLOCATION)
   target_link_libraries(tcmalloc_minimal_debug PRIVATE ${libtcmalloc_minimal_la_LIBADD})
-  weaken_object(tcmalloc_minimal_debug)
   install(TARGETS tcmalloc_minimal_debug)
   set_target_properties(tcmalloc_minimal_debug PROPERTIES
           VERSION ${TCMALLOC_SO_VERSION}
@@ -975,7 +931,6 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
               OUTPUT_NAME tcmalloc_minimal_debug)
     endif()
     target_link_libraries(tcmalloc_minimal_debug_static PRIVATE ${libtcmalloc_minimal_la_LIBADD})
-    weaken_object(tcmalloc_minimal_debug_static)
     install(TARGETS tcmalloc_minimal_debug_static)
   endif()
 
@@ -1090,7 +1045,7 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
 
   set(libtcmalloc_la_SOURCES ${TCMALLOC_CC} ${TCMALLOC_INCLUDES})
   set(libtcmalloc_la_DEFINE NDEBUG ${EMERGENCY_MALLOC_DEFINE})
-  set(libtcmalloc_la_LIBADD tcmalloc_internal ${maybe_threads_lib} Threads::Threads)
+  set(libtcmalloc_la_LIBADD tcmalloc_internal Threads::Threads)
   if(GPERFTOOLS_BUILD_HEAP_CHECKER)
     # heap-checker-bcad is last, in hopes its global ctor will run first.
     # (Note this is added to libtcmalloc.la, not libtcmalloc_internal.la,
@@ -1117,7 +1072,6 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
   set_target_properties(tcmalloc PROPERTIES
           VERSION ${TCMALLOC_SO_VERSION}
           SOVERSION ${TCMALLOC_SO_VERSION})
-  weaken_object(tcmalloc)
   install(TARGETS tcmalloc)
   if(GPERFTOOLS_BUILD_STATIC)
     add_library(tcmalloc_static STATIC ${libtcmalloc_la_SOURCES})
@@ -1126,7 +1080,6 @@ if(GPERFTOOLS_BUILD_HEAP_CHECKER OR GPERFTOOLS_BUILD_HEAP_PROFILER)
       set_target_properties(tcmalloc_static PROPERTIES OUTPUT_NAME tcmalloc)
     endif()
     target_link_libraries(tcmalloc_static PRIVATE ${libtcmalloc_la_LIBADD})
-    weaken_object(tcmalloc_static)
     install(TARGETS tcmalloc_static)
   endif()
 
@@ -1244,7 +1197,6 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
     set_target_properties(tcmalloc_debug PROPERTIES
             VERSION ${TCMALLOC_SO_VERSION}
             SOVERSION ${TCMALLOC_SO_VERSION})
-    weaken_object(tcmalloc_debug)
     install(TARGETS tcmalloc_debug)
     if(GPERFTOOLS_BUILD_STATIC)
       add_library(tcmalloc_debug_static STATIC src/debugallocation.cc ${HEAP_CHECKER_SOURCES} ${TCMALLOC_INCLUDES})
@@ -1255,7 +1207,6 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
         set_target_properties(tcmalloc_debug_static PROPERTIES
                 OUTPUT_NAME tcmalloc_debug)
       endif()
-      weaken_object(tcmalloc_debug_static)
       install(TARGETS tcmalloc_debug_static)
     endif()
 
@@ -1312,7 +1263,7 @@ if(GPERFTOOLS_BUILD_CPU_PROFILER)
           src/profile-handler.cc
           src/profiledata.cc
           ${CPU_PROFILER_INCLUDES})
-  set(libprofiler_la_LIBADD stacktrace ${maybe_threads_lib} fake_stacktrace_scope)
+  set(libprofiler_la_LIBADD stacktrace fake_stacktrace_scope)
   add_library(profiler SHARED ${libprofiler_la_SOURCES})
   target_link_libraries(profiler PRIVATE ${libprofiler_la_LIBADD})
   set_target_properties(profiler PROPERTIES
@@ -1393,7 +1344,6 @@ if(GPERFTOOLS_BUILD_HEAP_PROFILER OR GPERFTOOLS_BUILD_HEAP_CHECKER)
       # libstacktrace.la, which we already get via libtcmalloc.  Trying to
       # specify it twice causes link-time duplicate-definition errors. :-(
       target_link_libraries(tcmalloc_and_profiler PRIVATE ${libtcmalloc_la_LIBADD})
-      weaken_object(tcmalloc_and_profiler)
       install(TARGETS tcmalloc_and_profiler)
       if(GPERFTOOLS_BUILD_STATIC)
         add_library(tcmalloc_and_profiler_static STATIC ${libtcmalloc_la_SOURCES} ${libprofiler_la_SOURCES})
@@ -1403,7 +1353,6 @@ if(GPERFTOOLS_BUILD_HEAP_PROFILER OR GPERFTOOLS_BUILD_HEAP_CHECKER)
           set_target_properties(tcmalloc_and_profiler_static PROPERTIES
                   OUTPUT_NAME tcmalloc_and_profiler)
         endif()
-        weaken_object(tcmalloc_and_profiler_static)
         install(TARGETS tcmalloc_and_profiler_static)
       endif()
 

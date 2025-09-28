@@ -68,6 +68,7 @@
 #include <gperftools/malloc_extension.h>
 #include <gperftools/malloc_hook.h>
 #include <gperftools/stacktrace.h>
+
 #include "addressmap-inl.h"
 #include "base/commandlineflags.h"
 #include "base/googleinit.h"
@@ -75,6 +76,7 @@
 #include "base/spinlock.h"
 #include "malloc_hook-inl.h"
 #include "symbolize.h"
+#include "safe_strerror.h"
 
 // NOTE: due to #define below, tcmalloc.cc will omit tc_XXX
 // definitions. So that debug implementations can be defined
@@ -134,13 +136,6 @@ DEFINE_int32(max_free_queue_size,
 DEFINE_bool(symbolize_stacktrace,
             EnvToBool("TCMALLOC_SYMBOLIZE_STACKTRACE", true),
             "Symbolize the stack trace when provided (on some error exits)");
-
-// If we are LD_PRELOAD-ed against a non-pthreads app, then
-// pthread_once won't be defined.  We declare it here, for that
-// case (with weak linkage) which will cause the non-definition to
-// resolve to NULL.  We can then check for NULL or not in Instance.
-extern "C" int pthread_once(pthread_once_t *, void (*)(void))
-    ATTRIBUTE_WEAK;
 
 // ========================================================================= //
 
@@ -281,8 +276,7 @@ class MallocBlock {
 
   // This array will be filled with 0xCD, for use with memcmp.
   static unsigned char kMagicDeletedBuffer[1024];
-  static pthread_once_t deleted_buffer_initialized_;
-  static bool deleted_buffer_initialized_no_pthreads_;
+  static tcmalloc::TrivialOnce deleted_buffer_initialized_;
 
  private:  // data layout
 
@@ -302,8 +296,7 @@ class MallocBlock {
   // ...
   // then come the size2_ and magic2_, or a full page of mprotect-ed memory
   // if the malloc_page_fence feature is enabled.
-  size_t size2_;
-  size_t magic2_;
+  size_t size_and_magic2_[2];
 
  private:  // static data and helpers
 
@@ -374,9 +367,12 @@ class MallocBlock {
   // malloc_page_fence option) then there's no size2 or magic2
   // (instead, the guard page begins where size2 would be).
 
-  size_t* size2_addr() { return (size_t*)((char*)&size2_ + size1_); }
   const size_t* size2_addr() const {
-    return (const size_t*)((char*)&size2_ + size1_);
+    return (const size_t*)((const char*)&size_and_magic2_ + size1_);
+  }
+  size_t* size2_addr() {
+    const auto* cthis = this;
+    return const_cast<size_t*>(cthis->size2_addr());
   }
 
   size_t* magic2_addr() { return (size_t*)(size2_addr() + 1); }
@@ -487,10 +483,10 @@ class MallocBlock {
 
  public:  // public accessors
 
-  void* data_addr() { return (void*)&size2_; }
-  const void* data_addr() const { return (const void*)&size2_; }
+  void* data_addr() { return (void*)&size_and_magic2_; }
+  const void* data_addr() const { return (const void*)&size_and_magic2_; }
 
-  static size_t data_offset() { return OFFSETOF_MEMBER(MallocBlock, size2_); }
+  static size_t data_offset() { return OFFSETOF_MEMBER(MallocBlock, size_and_magic2_); }
 
   size_t data_size() const { return size1_; }
 
@@ -527,12 +523,13 @@ class MallocBlock {
         // of memory in this mode due to tremendous amount of wastage. There
         // is no point in propagating the error elsewhere.
         RAW_LOG(FATAL, "Out of memory: possibly due to page fence overhead: %s",
-                strerror(errno));
+                tcmalloc::SafeStrError(errno).c_str());
       }
       // Mark the page after the block inaccessible
       if (mprotect(p + (num_pages - 1) * pagesize, pagesize,
                    PROT_NONE|(malloc_page_fence_readable ? PROT_READ : 0))) {
-        RAW_LOG(FATAL, "Guard page setup failed: %s", strerror(errno));
+        RAW_LOG(FATAL, "Guard page setup failed: %s",
+                tcmalloc::SafeStrError(errno).c_str());
       }
       b = (MallocBlock*) (p + (num_pages - 1) * pagesize - sz);
     } else {
@@ -634,19 +631,11 @@ class MallocBlock {
 
   static void InitDeletedBuffer() {
     memset(kMagicDeletedBuffer, kMagicDeletedByte, sizeof(kMagicDeletedBuffer));
-    deleted_buffer_initialized_no_pthreads_ = true;
   }
 
   static void CheckForDanglingWrites(const MallocBlockQueueEntry& queue_entry) {
     // Initialize the buffer if necessary.
-    if (pthread_once)
-      pthread_once(&deleted_buffer_initialized_, &InitDeletedBuffer);
-    if (!deleted_buffer_initialized_no_pthreads_) {
-      // This will be the case on systems that don't link in pthreads,
-      // including on FreeBSD where pthread_once has a non-zero address
-      // (but doesn't do anything) even when pthreads isn't linked in.
-      InitDeletedBuffer();
-    }
+    deleted_buffer_initialized_.RunOnce(&InitDeletedBuffer);
 
     const unsigned char* p =
         reinterpret_cast<unsigned char*>(queue_entry.block);
@@ -857,8 +846,7 @@ size_t MallocBlock::free_queue_size_ = 0;
 SpinLock MallocBlock::free_queue_lock_(SpinLock::LINKER_INITIALIZED);
 
 unsigned char MallocBlock::kMagicDeletedBuffer[1024];
-pthread_once_t MallocBlock::deleted_buffer_initialized_ = PTHREAD_ONCE_INIT;
-bool MallocBlock::deleted_buffer_initialized_no_pthreads_ = false;
+tcmalloc::TrivialOnce MallocBlock::deleted_buffer_initialized_{base::LINKER_INITIALIZED};
 
 const char* const MallocBlock::kAllocName[] = {
   "malloc",

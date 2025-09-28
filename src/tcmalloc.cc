@@ -1171,7 +1171,7 @@ static TCMallocGuard module_enter_exit_hook;
 // Helpers for the exported routines below
 //-------------------------------------------------------------------
 
-static inline bool CheckCachedSizeClass(void *ptr) {
+static ATTRIBUTE_UNUSED bool CheckCachedSizeClass(void *ptr) {
   PageID p = reinterpret_cast<uintptr_t>(ptr) >> kPageShift;
   uint32 cached_value;
   if (!Static::pageheap()->TryGetSizeClass(p, &cached_value)) {
@@ -1432,6 +1432,13 @@ inline void free_null_or_invalid(void* ptr, void (*invalid_free_fn)(void*)) {
 }
 
 static ATTRIBUTE_NOINLINE void do_free_pages(Span* span, void* ptr) {
+  // Check to see if the object is in use.
+  CHECK_CONDITION_PRINT(span->location == Span::IN_USE,
+                        "Object was not in-use");
+  CHECK_CONDITION_PRINT(
+      span->start << kPageShift == reinterpret_cast<uintptr_t>(ptr),
+      "Pointer is not pointing to the start of a span");
+
   SpinLockHolder h(Static::pageheap_lock());
   if (span->sample) {
     StackTrace* st = reinterpret_cast<StackTrace*>(span->objects);

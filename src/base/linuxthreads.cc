@@ -42,6 +42,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
@@ -135,23 +136,6 @@ static const int sync_signals[]  = {
 #endif
   SIGSYS, SIGTRAP,
   SIGXCPU, SIGXFSZ };
-
-/* itoa() is not a standard function, and we cannot safely call printf()
- * after suspending threads. So, we just implement our own copy. A
- * recursive approach is the easiest here.
- */
-static char *local_itoa(char *buf, int i) {
-  if (i < 0) {
-    *buf++ = '-';
-    return local_itoa(buf, -i);
-  } else {
-    if (i >= 10)
-      buf = local_itoa(buf, i/10);
-    *buf++ = (i%10) + '0';
-    *buf   = '\000';
-    return buf;
-  }
-}
 
 ATTRIBUTE_NOINLINE
 static int local_clone (int (*fn)(void *), void *arg) {
@@ -647,6 +631,14 @@ int TCMalloc_ListAllProcessThreads(void *parameter,
     return -1;
   }
   need_sigprocmask = 1;
+
+  // make sure all functions used by parent from local_clone to after
+  // waitpid have plt entries fully initialized. We cannot afford
+  // dynamic linker running relocations and messing with errno (see
+  // comment just below)
+  (void)prctl(PR_GET_PDEATHSIG, 0);
+  (void)close(-1);
+  (void)waitpid(INT_MIN, nullptr, 0);
 
   /* After cloning, both the parent and the child share the same
    * instance of errno. We deal with this by being very

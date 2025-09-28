@@ -43,7 +43,6 @@
 #include "sampler.h"           // for Sampler
 #include "getenv_safe.h"       // TCMallocGetenvSafe
 #include "base/googleinit.h"
-#include "maybe_threads.h"
 
 namespace tcmalloc {
 
@@ -112,7 +111,8 @@ void Static::InitStaticVars() {
 
 void Static::InitLateMaybeRecursive() {
 #if defined(HAVE_FORK) && defined(HAVE_PTHREAD) \
-  && !defined(__APPLE__) && !defined(TCMALLOC_NO_ATFORK)
+  && !defined(__APPLE__) && !defined(TCMALLOC_NO_ATFORK) \
+  && !defined(PTHREADS_CRASHES_IF_RUN_TOO_EARLY)
   // OSX has it's own way of handling atfork in malloc (see
   // libc_override_osx.h).
   //
@@ -136,7 +136,7 @@ void Static::InitLateMaybeRecursive() {
   // be less fortunate and allow some early app constructors to run
   // before malloc is ever called.
 
-  perftools_pthread_atfork(
+  pthread_atfork(
     CentralCacheLockAll,    // parent calls before fork
     CentralCacheUnlockAll,  // parent calls after fork
     CentralCacheUnlockAll); // child calls after fork

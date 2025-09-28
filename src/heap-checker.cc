@@ -53,7 +53,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <linux/ptrace.h>
+#include <sys/ptrace.h>
 #include <sys/procfs.h>
 #include <sys/user.h>
 #include <elf.h> // NT_PRSTATUS
@@ -68,22 +68,24 @@
 
 #include <gperftools/heap-checker.h>
 
-#include "base/basictypes.h"
-#include "base/googleinit.h"
-#include "base/logging.h"
-#include <gperftools/stacktrace.h>
-#include "base/commandlineflags.h"
-#include "base/linuxthreads.h"
-#include "heap-profile-table.h"
-#include "base/low_level_alloc.h"
-#include "malloc_hook-inl.h"
-#include <gperftools/malloc_hook.h>
 #include <gperftools/malloc_extension.h>
-#include "maybe_threads.h"
-#include "memory_region_map.h"
+#include <gperftools/malloc_hook.h>
+#include <gperftools/stacktrace.h>
+#include <gperftools/tcmalloc.h>
+
+#include "base/basictypes.h"
+#include "base/commandlineflags.h"
+#include "base/googleinit.h"
+#include "base/linuxthreads.h"
+#include "base/logging.h"
+#include "base/low_level_alloc.h"
 #include "base/spinlock.h"
-#include "base/sysinfo.h"
 #include "base/stl_allocator.h"
+#include "base/sysinfo.h"
+#include "heap-profile-table.h"
+#include "malloc_hook-inl.h"
+#include "memory_region_map.h"
+#include "safe_strerror.h"
 
 // When dealing with ptrace-ed threads, we need to capture all thread
 // registers (as potential live pointers), and we need to capture
@@ -552,7 +554,7 @@ inline void set_thread_disable_counter(int value) {
 class InitThreadDisableCounter {
  public:
   InitThreadDisableCounter() {
-    perftools_pthread_key_create(&thread_disable_counter_key, NULL);
+    pthread_key_create(&thread_disable_counter_key, NULL);
     // Set up the main thread's value, which we have a special variable for.
     void* p = (void*)(intptr_t)main_thread_counter;   // store the counter directly
     perftools_pthread_setspecific(thread_disable_counter_key, p);
@@ -1461,7 +1463,6 @@ static SpinLock alignment_checker_lock(SpinLock::LINKER_INITIALIZED);
     }
     if (size < sizeof(void*)) continue;
 
-#ifdef NO_FRAME_POINTER
     // Frame pointer omission requires us to use libunwind, which uses direct
     // mmap and munmap system calls, and that needs special handling.
     if (name2 == kUnnamedProcSelfMapEntry) {
@@ -1478,12 +1479,11 @@ static SpinLock alignment_checker_lock(SpinLock::LINKER_INITIALIZED);
           // Skip unreadable object, so we don't crash trying to sweep it.
           RAW_VLOG(0, "Ignoring inaccessible object [%p, %p) "
                    "(msync error %d (%s))",
-                   object, object + size, errno, strerror(errno));
+                   object, object + size, errno, tcmalloc::SafeStrError(errno).c_str());
           continue;
         }
       }
     }
-#endif
 
     const char* const max_object = object + size - sizeof(void*);
     while (object <= max_object) {
@@ -1637,10 +1637,10 @@ void HeapLeakChecker::Create(const char *name, bool make_start_snapshot) {
       }
 
       const HeapProfileTable::Stats& t = heap_profile->total();
-      const size_t start_inuse_bytes = t.alloc_size - t.free_size;
-      const size_t start_inuse_allocs = t.allocs - t.frees;
-      RAW_VLOG(10, "Start check \"%s\" profile: %zu bytes "
-               "in %zu objects",
+      const int64_t start_inuse_bytes = t.alloc_size - t.free_size;
+      const int64_t start_inuse_allocs = t.allocs - t.frees;
+      RAW_VLOG(10, "Start check \"%s\" profile: %" PRId64 " bytes "
+               "in %" PRId64 " objects",
                name_, start_inuse_bytes, start_inuse_allocs);
     } else {
       RAW_LOG(WARNING, "Heap checker is not active, "
@@ -1871,8 +1871,8 @@ bool HeapLeakChecker::DoNoLeaks(ShouldSymbolize should_symbolize) {
              "(but no 100%% guarantee that there aren't any): "
              "found %" PRId64 " reachable heap objects of %" PRId64 " bytes",
              name_,
-             int64(stats.allocs - stats.frees),
-             int64(stats.alloc_size - stats.free_size));
+             stats.allocs - stats.frees,
+             stats.alloc_size - stats.free_size);
   } else {
     if (should_symbolize == SYMBOLIZE) {
       // To turn addresses into symbols, we need to fork, which is a
@@ -2118,13 +2118,15 @@ void HeapLeakChecker_InternalInitStart() {
   // and heap profiler is indeed able to keep track
   // of the objects being allocated.
   // We test this to make sure we are indeed checking for leaks.
-  char* test_str = new char[5];
+  char* test_str = new (tc_newarray(5)) char[5];
   size_t size;
   { SpinLockHolder l(&heap_checker_lock);
     RAW_CHECK(heap_profile->FindAlloc(test_str, &size),
               "our own new/delete not linked?");
   }
-  delete[] test_str;
+
+  tc_deletearray(test_str);
+
   { SpinLockHolder l(&heap_checker_lock);
     // This check can fail when it should not if another thread allocates
     // into this same spot right this moment,

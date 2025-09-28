@@ -83,7 +83,6 @@
 #endif
 
 using std::string;
-using std::sort;
 
 //----------------------------------------------------------------------
 // Flags that control heap-profiling
@@ -240,7 +239,7 @@ static void DumpProfileLocked(const char* reason) {
   // a memory lock now.
   RawFD fd = RawOpenForWriting(file_name);
   if (fd == kIllegalRawFD) {
-    RAW_LOG(ERROR, "Failed dumping heap profile to %s", file_name);
+    RAW_LOG(ERROR, "Failed dumping heap profile to %s. Numeric errno is %d", file_name, errno);
     dumping = false;
     return;
   }
@@ -269,7 +268,7 @@ static void DumpProfileLocked(const char* reason) {
 static void MaybeDumpProfileLocked() {
   if (!dumping) {
     const HeapProfileTable::Stats& total = heap_profile->total();
-    const int64 inuse_bytes = total.alloc_size - total.free_size;
+    const int64_t inuse_bytes = total.alloc_size - total.free_size;
     bool need_to_dump = false;
     char buf[128];
 
@@ -597,7 +596,7 @@ struct HeapProfileEndWriter {
     char buf[128];
     if (heap_profile) {
       const HeapProfileTable::Stats& total = heap_profile->total();
-      const int64 inuse_bytes = total.alloc_size - total.free_size;
+      const int64_t inuse_bytes = total.alloc_size - total.free_size;
 
       if ((inuse_bytes >> 20) > 0) {
         snprintf(buf, sizeof(buf), ("Exiting, %" PRId64 " MB in use"),
