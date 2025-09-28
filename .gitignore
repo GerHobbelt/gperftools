@@ -56,6 +56,7 @@
 /heap-profiler_debug_unittest.sh
 /heap-profiler_unittest
 /heap-profiler_unittest.sh
+/heap_checker_stub_test
 /install-sh
 /libprofiler.pc
 /libtcmalloc.pc
@@ -91,7 +92,6 @@
 /min_per_thread_cache_size_test
 /min_per_thread_cache_size_test.exe
 /missing
-/mmap_hook_test
 /packed_cache_test
 /packed_cache_test.exe
 /page_heap_test
@@ -165,3 +165,7 @@
 /unwind_bench.exe
 /vendor/googletest/googletest/src/.deps
 /vendor/googletest/googletest/src/.dirstamp
+/vendor/libbacktrace-integration/.deps
+/vendor/libbacktrace-integration/.dirstamp
+/vendor/libbacktrace/.deps
+/vendor/libbacktrace/.dirstamp

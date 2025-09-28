@@ -59,9 +59,15 @@ using base::internal::kHookListMaxValues;
 typedef base::internal::HookList<MallocHook::NewHook> TestHookList;
 
 
-const MallocHook::NewHook kTestValue = reinterpret_cast<MallocHook::NewHook>(69);
-const MallocHook::NewHook kAnotherTestValue = reinterpret_cast<MallocHook::NewHook>(42);
-const MallocHook::NewHook kThirdTestValue = reinterpret_cast<MallocHook::NewHook>(7);
+const MallocHook::NewHook kTestValue = [] (const void* ptr, size_t size) {
+  printf("kTestValue\n");
+};
+const MallocHook::NewHook kAnotherTestValue = [] (const void* ptr, size_t size) {
+  printf("kAnotherTestValue\n");
+};
+const MallocHook::NewHook kThirdTestValue = [] (const void* ptr, size_t size) {
+  printf("kThirdTestValue\n");
+};
 
 TEST(HookListTest, InitialValueExists) {
   TestHookList list{kTestValue};
@@ -135,7 +141,7 @@ TEST(HookListTest, InvalidAddRejected) {
 
 TEST(HookListTest, FillUpTheList) {
   TestHookList list{kTestValue};
-  int num_inserts = 0;
+  intptr_t num_inserts = 0;
   while (list.Add(reinterpret_cast<MallocHook::NewHook>(++num_inserts))) {
     // empty
   }
@@ -146,7 +152,7 @@ TEST(HookListTest, FillUpTheList) {
   EXPECT_EQ(kHookListMaxValues, list.Traverse(values,
                                               kHookListMaxValues));
   EXPECT_EQ(kTestValue, values[0]);
-  for (int i = 1; i < kHookListMaxValues; ++i) {
+  for (intptr_t i = 1; i < kHookListMaxValues; ++i) {
     EXPECT_EQ(reinterpret_cast<MallocHook::NewHook>(i), values[i]);
   }
 }
@@ -155,7 +161,7 @@ void MultithreadedTestThread(TestHookList* list, int shift,
                              int thread_num) {
   std::string message;
   char buf[64];
-  for (int i = 1; i < 1000; ++i) {
+  for (intptr_t i = 1; i < 1000; ++i) {
     // In each loop, we insert a unique value, check it exists, remove it, and
     // check it doesn't exist.  We also record some stats to log at the end of
     // each thread.  Each insertion location and the length of the list is

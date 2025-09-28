@@ -66,14 +66,6 @@ typedef int ucontext_t;   // just to quiet the compiler, mostly
 #include "profiledata.h"
 #include "profile-handler.h"
 
-using std::string;
-
-DEFINE_bool(cpu_profiler_unittest,
-            EnvToBool("PERFTOOLS_UNITTEST", true),
-            "Determines whether or not we are running under the \
-             control of a unit test. This allows us to include or \
-			 exclude certain behaviours.");
-
 // Collects up all profile data. This is a singleton, which is
 // initialized by a constructor at startup. If no cpu profiler
 // signal is specified then the profiler lifecycle is either
@@ -116,7 +108,7 @@ class CpuProfiler {
   SpinLock      lock_;
   ProfileData   collector_;
 
-  // Filter function and its argument, if any.  (NULL means include all
+  // Filter function and its argument, if any.  (nullptr means include all
   // samples).  Set at start, read-only while running.  Written while holding
   // lock_, read and executed in the context of SIGPROF interrupt.
   int           (*filter_)(void*);
@@ -175,30 +167,21 @@ CpuProfiler CpuProfiler::instance_;
 
 // Initialize profiling: activated if getenv("CPUPROFILE") exists.
 CpuProfiler::CpuProfiler()
-    : prof_handler_token_(NULL) {
-  // TODO(cgd) Move this code *out* of the CpuProfile constructor into a
-  // separate object responsible for initialization. With ProfileHandler there
-  // is no need to limit the number of profilers.
-  if (getenv("CPUPROFILE") == NULL) {
-    if (!FLAGS_cpu_profiler_unittest) {
-      RAW_LOG(WARNING, "CPU profiler linked but no valid CPUPROFILE environment variable found\n");
-    }
+    : prof_handler_token_(nullptr) {
+  if (getenv("CPUPROFILE") == nullptr) {
     return;
   }
 
   // We don't enable profiling if setuid -- it's a security risk
 #ifdef HAVE_GETEUID
   if (getuid() != geteuid()) {
-    if (!FLAGS_cpu_profiler_unittest) {
-      RAW_LOG(WARNING, "Cannot perform CPU profiling when running with setuid\n");
-    }
     return;
   }
 #endif
 
   char *signal_number_str = getenv("CPUPROFILESIGNAL");
-  if (signal_number_str != NULL) {
-    long int signal_number = strtol(signal_number_str, NULL, 10);
+  if (signal_number_str != nullptr) {
+    long int signal_number = strtol(signal_number_str, nullptr, 10);
     if (signal_number >= 1 && signal_number <= 64) {
       intptr_t old_signal_handler = reinterpret_cast<intptr_t>(signal(signal_number, CpuProfilerSwitch));
       if (old_signal_handler == 0) {
@@ -212,13 +195,10 @@ CpuProfiler::CpuProfiler()
   } else {
     char fname[PATH_MAX];
     if (!GetUniquePathFromEnv("CPUPROFILE", fname)) {
-      if (!FLAGS_cpu_profiler_unittest) {
-        RAW_LOG(WARNING, "CPU profiler linked but no valid CPUPROFILE environment variable found\n");
-      }
       return;
-	}
+    }
 
-    if (!Start(fname, NULL)) {
+    if (!Start(fname, nullptr)) {
       RAW_LOG(FATAL, "Can't turn on cpu profiling for '%s': %s\n",
               fname, strerror(errno));
     }
@@ -241,8 +221,8 @@ bool CpuProfiler::Start(const char* fname, const ProfilerOptions* options) {
     return false;
   }
 
-  filter_ = NULL;
-  if (options != NULL && options->filter_in_thread != NULL) {
+  filter_ = nullptr;
+  if (options != nullptr && options->filter_in_thread != nullptr) {
     filter_ = options->filter_in_thread;
     filter_arg_ = options->filter_in_thread_arg;
   }
@@ -307,21 +287,35 @@ void CpuProfiler::GetCurrentState(ProfilerState* state) {
   state->enabled = collector_state.enabled;
   state->start_time = static_cast<time_t>(collector_state.start_time);
   state->samples_gathered = collector_state.samples_gathered;
-  int buf_size = sizeof(state->profile_name);
-  strncpy(state->profile_name, collector_state.profile_name, buf_size);
-  state->profile_name[buf_size-1] = '\0';
+
+  constexpr int kBufSize = sizeof(state->profile_name);
+  std::string_view profile_name{collector_state.profile_name};
+  memcpy(state->profile_name, profile_name.data(), std::min<size_t>(kBufSize, profile_name.size() + 1));
+  state->profile_name[kBufSize - 1] = '\0';
+
+  // Note, this is "secret" and version-specific API we do for
+  // profiler_unittest. It is explicitly not part of any API/ABI
+  // stability guarantees.
+  //
+  // If there is space in profile_name left for the pointer, then we
+  // append address of samples_gathered. The test uses this "ticks
+  // count" as a form of clock to know how long it runs.
+  if (profile_name.size() + 1 + sizeof(void*) <= kBufSize) {
+    void* ptr = &collector_.count_;
+    memcpy(state->profile_name + profile_name.size() + 1, &ptr, sizeof(ptr));
+  }
 }
 
 void CpuProfiler::EnableHandler() {
-  RAW_CHECK(prof_handler_token_ == NULL, "SIGPROF handler already registered");
+  RAW_CHECK(prof_handler_token_ == nullptr, "SIGPROF handler already registered");
   prof_handler_token_ = ProfileHandlerRegisterCallback(prof_handler, this);
-  RAW_CHECK(prof_handler_token_ != NULL, "Failed to set up SIGPROF handler");
+  RAW_CHECK(prof_handler_token_ != nullptr, "Failed to set up SIGPROF handler");
 }
 
 void CpuProfiler::DisableHandler() {
-  RAW_CHECK(prof_handler_token_ != NULL, "SIGPROF handler is not registered");
+  RAW_CHECK(prof_handler_token_ != nullptr, "SIGPROF handler is not registered");
   ProfileHandlerUnregisterCallback(prof_handler_token_);
-  prof_handler_token_ = NULL;
+  prof_handler_token_ = nullptr;
 }
 
 // Signal handler that records the pc in the profile-data structure. We do no
@@ -334,7 +328,7 @@ void CpuProfiler::prof_handler(int sig, siginfo_t*, void* signal_ucontext,
                                void* cpu_profiler) {
   CpuProfiler* instance = static_cast<CpuProfiler*>(cpu_profiler);
 
-  if (instance->filter_ == NULL ||
+  if (instance->filter_ == nullptr ||
       (*instance->filter_)(instance->filter_arg_)) {
     void* stack[ProfileData::kMaxStackDepth];
 
@@ -382,7 +376,7 @@ extern "C" PERFTOOLS_DLL_DECL int ProfilingIsEnabledForAllThreads() {
 }
 
 extern "C" PERFTOOLS_DLL_DECL int ProfilerStart(const char* fname) {
-  return CpuProfiler::instance_.Start(fname, NULL);
+  return CpuProfiler::instance_.Start(fname, nullptr);
 }
 
 extern "C" PERFTOOLS_DLL_DECL int ProfilerStartWithOptions(

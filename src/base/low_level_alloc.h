@@ -37,16 +37,22 @@
 // sparingly, and only when malloc() would introduce an unwanted
 // dependency, such as inside the heap-checker.
 
-#include <config.h>
-#include <stddef.h>             // for size_t
+#include "config.h"
+
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/basictypes.h"
+
+namespace tcmalloc {
 
 class LowLevelAlloc {
  public:
   class PagesAllocator {
   public:
     virtual ~PagesAllocator();
-    virtual void *MapPages(size_t size) = 0;
+    virtual std::pair<void *,size_t> MapPages(size_t size) = 0;
     virtual void UnMapPages(void *addr, size_t size) = 0;
   };
 
@@ -71,11 +77,11 @@ class LowLevelAlloc {
   // from which it was allocated.
   static void Free(void *s);
 
-  static Arena *NewArena(Arena *meta_data_arena);
+  static Arena *NewArena();
 
   // note: pages allocator will never be destroyed and allocated pages will never be freed
   // When allocator is nullptr, it's same as NewArena
-  static Arena *NewArenaWithCustomAlloc(Arena *meta_data_arena, PagesAllocator *allocator);
+  static Arena *NewArenaWithCustomAlloc(PagesAllocator *allocator);
 
   // Destroys an arena allocated by NewArena and returns true,
   // provided no allocated blocks remain in the arena.
@@ -84,11 +90,14 @@ class LowLevelAlloc {
   // It is illegal to attempt to destroy the DefaultArena().
   static bool DeleteArena(Arena *arena);
 
- private:
-  static Arena *DefaultArena();
   static PagesAllocator *GetDefaultPagesAllocator(void);
+
+private:
+  static Arena *DefaultArena();
 
   LowLevelAlloc();      // no instances
 };
+
+}  // namespace tcmalloc
 
 #endif
