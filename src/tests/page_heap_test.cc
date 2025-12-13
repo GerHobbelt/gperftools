@@ -11,6 +11,7 @@
 
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include "page_heap.h"
 
@@ -80,6 +81,58 @@ TEST(PageHeapTest, Stats) {
   // Delete span 's1'
   ph->Delete(s1);
   CheckStats(ph.get(), 256, 128, 128);
+}
+
+TEST(PageHeapTest, Decommit) {
+  if (!HaveSystemRelease()) {
+      return;
+  }
+
+  std::unique_ptr<tcmalloc::PageHeap> ph(new tcmalloc::PageHeap());
+
+  constexpr size_t kNumPtrs = 10;
+  constexpr size_t kBigAllocPages = kMaxPages * 2;
+
+  // Ensure we have a chunk of sequential memory useful for the test below.
+  {
+    tcmalloc::Span* s = ph->New(kBigAllocPages * kNumPtrs * 2);
+    ASSERT_NE(s, nullptr);
+    ph->Delete(s);
+  }
+
+  std::vector<tcmalloc::Span*> used_spans;
+  std::vector<tcmalloc::Span*> free_spans;
+  for (size_t i = 0; i < kNumPtrs; ++i) {
+    // interleave free_spans and used_spans to prevent free_spans from coalescing
+    free_spans.push_back(ph->New(kBigAllocPages));
+    used_spans.push_back(ph->New(kBigAllocPages));
+  }
+
+  for (auto span : free_spans) {
+    ph->Delete(span);
+  }
+
+  for (size_t i = 0; i < 2 * kNumPtrs; ++i) {
+    {
+      SpinLockHolder l(ph->pageheap_lock());
+      EXPECT_EQ(kBigAllocPages, ph->ReleaseAtLeastNPages(1));
+    }
+
+    tcmalloc::Span* new_span = ph->New(kBigAllocPages);
+    ph->Delete(new_span);
+  }
+
+  {
+    SpinLockHolder l(ph->pageheap_lock());
+    EXPECT_EQ(kBigAllocPages, ph->ReleaseAtLeastNPages(1));
+  }
+  for (auto span : free_spans) {
+    EXPECT_EQ(span->location, tcmalloc::Span::ON_RETURNED_FREELIST);
+  }
+
+  for (auto span : used_spans) {
+    ph->Delete(span);
+  }
 }
 
 // The number of kMaxPages-sized Spans we will allocate and free during the

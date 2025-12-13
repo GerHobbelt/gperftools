@@ -1050,7 +1050,7 @@ static inline void DebugDeallocate(void* ptr, int type, size_t given_size) {
   if (ptr)  MallocBlock::FromRawPointer(ptr)->Deallocate(type, given_size);
 }
 
-class ATTRIBUTE_HIDDEN DebugTestingPortal : public TestingPortalImpl {
+class ATTRIBUTE_VISIBILITY_HIDDEN DebugTestingPortal : public TestingPortalImpl {
 public:
   ~DebugTestingPortal() override = default;
   bool IsDebuggingMalloc() override { return true; }
@@ -1262,6 +1262,12 @@ extern "C" PERFTOOLS_DLL_DECL void tc_free(void* ptr) PERFTOOLS_NOTHROW {
 extern "C" PERFTOOLS_DLL_DECL void tc_free_sized(void *ptr, size_t size) PERFTOOLS_NOTHROW {
   tcmalloc::InvokeDeleteHook(ptr);
   DebugDeallocate(ptr, MallocBlock::kMallocType, size);
+  force_frame();
+}
+
+extern "C" PERFTOOLS_DLL_DECL void tc_free_aligned_sized(void* ptr, size_t align, size_t size) PERFTOOLS_NOTHROW {
+  tcmalloc::InvokeDeleteHook(ptr);
+  DebugDeallocate(ptr, MallocBlock::kMallocType, 0);
   force_frame();
 }
 

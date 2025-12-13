@@ -79,7 +79,6 @@
 //         or allocated.  If free, it is in one of pageheap's freelist.
 //
 // TODO: Bias reclamation to larger addresses
-// TODO: implement mallinfo/mallopt
 // TODO: Better testing
 //
 // 9/28/2003 (new page-level allocator replaces ptmalloc2):
@@ -180,96 +179,57 @@ DECLARE_int64(tcmalloc_heap_limit_mb);
 #define TC_ALIAS(name) __attribute__((alias(#name)))
 #endif
 
-// We already declared these functions in tcmalloc.h, but we have to
-// declare them again to give them an ATTRIBUTE_SECTION: we want to
-// put all callers of tcmalloc::Invoke* in this module into
-// ATTRIBUTE_SECTION(google_malloc) section, so that
-// MallocHook::GetCallerStackTrace can function accurately.
-#ifndef _WIN32   // windows doesn't have attribute_section, so don't bother
 extern "C" {
-  void* tc_malloc(size_t size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_free(void* ptr) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_free_sized(void* ptr, size_t size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_realloc(void* ptr, size_t size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_calloc(size_t nmemb, size_t size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_cfree(void* ptr) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE void* tc_malloc(size_t size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_free(void* ptr) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_free_sized(void* ptr, size_t size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_free_aligned_sized(void* ptr, size_t align, size_t size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void* tc_realloc(void* ptr, size_t size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void* tc_calloc(size_t nmemb, size_t size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_cfree(void* ptr) PERFTOOLS_NOTHROW;
 
-  void* tc_memalign(size_t __alignment, size_t __size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  int tc_posix_memalign(void** ptr, size_t align, size_t size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_valloc(size_t __size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_pvalloc(size_t __size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE void* tc_memalign(size_t __alignment, size_t __size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE int tc_posix_memalign(void** ptr, size_t align, size_t size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void* tc_valloc(size_t __size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void* tc_pvalloc(size_t __size) PERFTOOLS_NOTHROW;
 
-  void tc_malloc_stats(void) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  int tc_mallopt(int cmd, int value) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-#ifdef HAVE_STRUCT_MALLINFO
-  struct mallinfo tc_mallinfo(void) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE void tc_malloc_stats(void) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE int tc_mallopt(int cmd, int value) PERFTOOLS_NOTHROW;
+#if GPERFTOOLS_HAS_MALLINFO
+  ATTRIBUTE_NOINLINE struct mallinfo tc_mallinfo(void) PERFTOOLS_NOTHROW;
 #endif
-#ifdef HAVE_STRUCT_MALLINFO2
-  struct mallinfo2 tc_mallinfo2(void) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+#ifdef GPERFTOOLS_HAS_MALLINFO2
+  ATTRIBUTE_NOINLINE struct mallinfo2 tc_mallinfo2(void) PERFTOOLS_NOTHROW;
 #endif
 
-  void* tc_new(size_t size)
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_delete(void* p) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_delete_sized(void* p, size_t size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_newarray(size_t size)
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_deletearray(void* p) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_deletearray_sized(void* p, size_t size) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE void* tc_new(size_t size);
+  ATTRIBUTE_NOINLINE void tc_delete(void* p) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_delete_sized(void* p, size_t size) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void* tc_newarray(size_t size);
+  ATTRIBUTE_NOINLINE void tc_deletearray(void* p) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_deletearray_sized(void* p, size_t size) PERFTOOLS_NOTHROW;
 
   // And the nothrow variants of these:
-  void* tc_new_nothrow(size_t size, const std::nothrow_t&) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_newarray_nothrow(size_t size, const std::nothrow_t&) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE void* tc_new_nothrow(size_t size, const std::nothrow_t&) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void* tc_newarray_nothrow(size_t size, const std::nothrow_t&) PERFTOOLS_NOTHROW;
   // Surprisingly, standard C++ library implementations use a
   // nothrow-delete internally.  See, eg:
   // http://www.dinkumware.com/manuals/?manual=compleat&page=new.html
-  void tc_delete_nothrow(void* ptr, const std::nothrow_t&) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_deletearray_nothrow(void* ptr, const std::nothrow_t&) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE void tc_delete_nothrow(void* ptr, const std::nothrow_t&) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_deletearray_nothrow(void* ptr, const std::nothrow_t&) PERFTOOLS_NOTHROW;
 
-  void* tc_new_aligned(size_t size, std::align_val_t al)
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_delete_aligned(void* p, std::align_val_t al) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_delete_sized_aligned(void* p, size_t size, std::align_val_t al) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_newarray_aligned(size_t size, std::align_val_t al)
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_deletearray_aligned(void* p, std::align_val_t al) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_deletearray_sized_aligned(void* p, size_t size, std::align_val_t al) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE void* tc_new_aligned(size_t size, std::align_val_t al);
+  ATTRIBUTE_NOINLINE void tc_delete_aligned(void* p, std::align_val_t al) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_delete_sized_aligned(void* p, size_t size, std::align_val_t al) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void* tc_newarray_aligned(size_t size, std::align_val_t al);
+  ATTRIBUTE_NOINLINE void tc_deletearray_aligned(void* p, std::align_val_t al) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_deletearray_sized_aligned(void* p, size_t size, std::align_val_t al) PERFTOOLS_NOTHROW;
 
   // And the nothrow variants of these:
-  void* tc_new_aligned_nothrow(size_t size, std::align_val_t al, const std::nothrow_t&) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_newarray_aligned_nothrow(size_t size, std::align_val_t al, const std::nothrow_t&) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_delete_aligned_nothrow(void* ptr, std::align_val_t al, const std::nothrow_t&) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void tc_deletearray_aligned_nothrow(void* ptr, std::align_val_t al, const std::nothrow_t&) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE void* tc_new_aligned_nothrow(size_t size, std::align_val_t al, const std::nothrow_t&) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void* tc_newarray_aligned_nothrow(size_t size, std::align_val_t al, const std::nothrow_t&) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_delete_aligned_nothrow(void* ptr, std::align_val_t al, const std::nothrow_t&) PERFTOOLS_NOTHROW;
+  ATTRIBUTE_NOINLINE void tc_deletearray_aligned_nothrow(void* ptr, std::align_val_t al, const std::nothrow_t&) PERFTOOLS_NOTHROW;
 
   // Some non-standard extensions that we support.
 
@@ -277,10 +237,8 @@ extern "C" {
   //    OS X: malloc_size()
   //    glibc: malloc_usable_size()
   //    Windows: _msize()
-  size_t tc_malloc_size(void* p) PERFTOOLS_NOTHROW
-      ATTRIBUTE_SECTION(google_malloc);
+  ATTRIBUTE_NOINLINE size_t tc_malloc_size(void* p) PERFTOOLS_NOTHROW;
 }  // extern "C"
-#endif  // #ifndef _WIN32
 
 // ----------------------- IMPLEMENTATION -------------------------------
 
@@ -544,7 +502,7 @@ namespace tcmalloc {
 
 TestingPortal::~TestingPortal() = default;
 
-class ATTRIBUTE_HIDDEN TestingPortalImpl : public TestingPortal {
+class ATTRIBUTE_VISIBILITY_HIDDEN TestingPortalImpl : public TestingPortal {
 public:
   ~TestingPortalImpl() override = default;
 
@@ -845,6 +803,11 @@ class TCMallocImplementation : public MallocExtension {
       return true;
     }
 
+    if (strcmp(name, "tcmalloc.sample_parameter") == 0) {
+      *value = FLAGS_tcmalloc_sample_parameter;
+      return true;
+    }
+
     if (TestingPortal** portal = TestingPortal::CheckGetPortal(name, value); portal) {
       *portal = TestingPortalImpl::Get();
       *value = 1;
@@ -877,6 +840,15 @@ class TCMallocImplementation : public MallocExtension {
     if (strcmp(name, "tcmalloc.heap_limit_mb") == 0) {
       SpinLockHolder l(Static::pageheap_lock());
       FLAGS_tcmalloc_heap_limit_mb = value;
+      return true;
+    }
+
+    if (strcmp(name, "tcmalloc.sample_parameter") == 0) {
+      FLAGS_tcmalloc_sample_parameter = value;
+      // By clearing current thread's cache we force next allocations
+      // to read freshly updated sample parameter. This is only going
+      // to affect current thread, but this is better than nothing.
+      MallocExtension::instance()->MarkThreadIdle();
       return true;
     }
 
@@ -1103,7 +1075,7 @@ static bool size_class_with_alignment(size_t size, size_t align, uint32_t* cl) {
 // ThreadCache::InitModule is not inlined which would cause nallocx to
 // become non-leaf function with stack frame and stack spills.
 static ATTRIBUTE_NOINLINE size_t nallocx_slow(size_t size, int flags) {
-  if (PREDICT_FALSE(!Static::IsInited())) ThreadCache::InitModule();
+  ThreadCache::EnsureMallocInitialized();
 
   size_t align = static_cast<size_t>(1ull << (flags & 0x3f));
   uint32_t cl;
@@ -1732,7 +1704,7 @@ inline int do_mallopt(int cmd, int value) {
   return 1;     // Indicates error
 }
 
-#if defined(HAVE_STRUCT_MALLINFO) || defined(HAVE_STRUCT_MALLINFO2)
+#if GPERFTOOLS_HAS_MALLINFO2 || GPERFTOOLS_HAS_MALLINFO
 template <typename Mallinfo>
 inline Mallinfo do_mallinfo() {
   TCMallocStats stats;
@@ -1762,7 +1734,7 @@ inline Mallinfo do_mallinfo() {
 
   return info;
 }
-#endif  // HAVE_STRUCT_MALLINFO || HAVE_STRUCT_MALLINFO2
+#endif  // GPERFTOOLS_HAS_MALLINFO{,2}
 
 }  // end unnamed namespace
 
@@ -1818,25 +1790,25 @@ extern "C" PERFTOOLS_DLL_DECL int tc_query_new_mode() PERFTOOLS_NOTHROW {
 namespace tcmalloc {
 
 
-static ATTRIBUTE_SECTION(google_malloc)
+static ATTRIBUTE_NOINLINE
 void invoke_hooks_and_free(void *ptr) {
   tcmalloc::InvokeDeleteHook(ptr);
   do_free(ptr);
 }
 
-ATTRIBUTE_SECTION(google_malloc)
+ATTRIBUTE_NOINLINE
 void* cpp_throw_oom(size_t size) {
   return handle_oom(retry_malloc, reinterpret_cast<void *>(size),
                     true, false);
 }
 
-ATTRIBUTE_SECTION(google_malloc)
+ATTRIBUTE_NOINLINE
 void* cpp_nothrow_oom(size_t size) {
   return handle_oom(retry_malloc, reinterpret_cast<void *>(size),
                     true, true);
 }
 
-ATTRIBUTE_SECTION(google_malloc)
+ATTRIBUTE_NOINLINE
 void* malloc_oom(size_t size) {
   return handle_oom(retry_malloc, reinterpret_cast<void *>(size),
                     false, true);
@@ -1877,7 +1849,7 @@ static void* do_allocate_full(size_t size) {
 }
 
 #define AF(oom) \
-  ATTRIBUTE_SECTION(google_malloc)   \
+  ATTRIBUTE_NOINLINE   \
   void* allocate_full_##oom(size_t size) {   \
     return do_allocate_full<oom>(size);     \
   }
@@ -1910,7 +1882,7 @@ static void *retry_do_memalign(void *arg) {
   return do_memalign_pages(data->align, data->size);
 }
 
-static ATTRIBUTE_SECTION(google_malloc)
+static ATTRIBUTE_NOINLINE
 void* memalign_pages(size_t align, size_t size,
                      bool from_operator, bool nothrow) {
   void *rv = do_memalign_pages(align, size);
@@ -2203,6 +2175,11 @@ extern "C" PERFTOOLS_DLL_DECL void tc_delete_aligned_nothrow(void* p, std::align
   free_fast_path(p);
 }
 
+extern "C" PERFTOOLS_DLL_DECL
+void tc_free_aligned_sized(void *ptr, size_t, size_t) PERFTOOLS_NOTHROW {
+  free_fast_path(ptr);
+}
+
 extern "C" PERFTOOLS_DLL_DECL void* tc_newarray_aligned(size_t size, std::align_val_t align)
 #ifdef TC_ALIAS
 TC_ALIAS(tc_new_aligned);
@@ -2276,13 +2253,13 @@ extern "C" PERFTOOLS_DLL_DECL int tc_mallopt(int cmd, int value) PERFTOOLS_NOTHR
   return do_mallopt(cmd, value);
 }
 
-#ifdef HAVE_STRUCT_MALLINFO
+#if GPERFTOOLS_HAS_MALLINFO
 extern "C" PERFTOOLS_DLL_DECL struct mallinfo tc_mallinfo(void) PERFTOOLS_NOTHROW {
   return do_mallinfo<struct mallinfo>();
 }
 #endif
 
-#ifdef HAVE_STRUCT_MALLINFO2
+#if GPERFTOOLS_HAS_MALLINFO2
 extern "C" PERFTOOLS_DLL_DECL struct mallinfo2 tc_mallinfo2(void) PERFTOOLS_NOTHROW {
   return do_mallinfo<struct mallinfo2>();
 }

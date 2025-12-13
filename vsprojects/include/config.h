@@ -34,10 +34,6 @@
    don't. */
 /* #undef HAVE_DECL_BACKTRACE */
 
-/* Define to 1 if you have the declaration of `cfree', and to 0 if you don't.
-   */
-#define HAVE_DECL_CFREE 0
-
 /* Define to 1 if you have the declaration of `memalign', and to 0 if you
    don't. */
 #define HAVE_DECL_MEMALIGN 0
@@ -139,9 +135,6 @@
 
 /* define if your compiler supports alignment of functions */
 /* #undef HAVE___ATTRIBUTE__ALIGNED_FN */
-
-/* Define to 1 if compiler supports __environ */
-/* #undef HAVE___ENVIRON */
 
 /* Always the empty-string on non-windows systems. On windows, should be
    "__declspec(dllexport)". This way, when we compile the dll, we export our

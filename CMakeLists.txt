@@ -5,14 +5,9 @@ cmake_minimum_required(VERSION 3.12)
 
 set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the build type")
 
-project(gperftools VERSION 2.16 LANGUAGES C CXX
+project(gperftools VERSION 2.17.2 LANGUAGES C CXX
         DESCRIPTION "Performance tools for C++"
         HOMEPAGE_URL https://github.com/gperftools/gperftools)
-
-# Update this value for every release!
-set(TCMALLOC_SO_VERSION 9.18.5)
-set(PROFILER_SO_VERSION 5.13.5)
-set(TCMALLOC_AND_PROFILER_SO_VERSION 10.13.6)
 
 # The user can choose not to compile in the heap-profiler, or the
 # cpu-profiler.  There's also the possibility for a 'fully minimal'
@@ -112,6 +107,10 @@ option(gperftools_enable_libgcc_unwinder_by_default
        OFF)
 set(PREFER_LIBGCC_UNWINDER ${gperftools_enable_libgcc_unwinder_by_default})
 
+option(gperftools_enable_broken_install_targets
+       "Install .so/.a libraries produced by this project"
+       OFF)
+
 set(gperftools_tcmalloc_pagesize ${default_tcmalloc_pagesize}
   CACHE STRING "Set the tcmalloc internal page size")
 set(allowed_page_sizes LIST "4;8;16;32;64;128;256")
@@ -173,8 +172,6 @@ check_c_source_compiles("#include <stdlib.h>
         HAVE___ATTRIBUTE__ALIGNED_FN)
 
 set(CMAKE_EXTRA_INCLUDE_FILES "malloc.h")
-check_type_size("struct mallinfo" STRUCT_MALLINFO LANGUAGE CXX)
-check_type_size("struct mallinfo2" STRUCT_MALLINFO2 LANGUAGE CXX)
 check_function_exists("sbrk" HAVE_SBRK) # for tcmalloc to get memory
 check_function_exists("geteuid" HAVE_GETEUID) # for turning off services when run as root
 check_include_file("features.h" HAVE_FEATURES_H) # for vdso_support.h, Where __GLIBC__ is defined
@@ -198,24 +195,11 @@ check_include_file("unistd.h" HAVE_UNISTD_H)
 # We override a lot of memory allocation routines, not all of which are
 # standard.  For those the system doesn't declare, we'll declare ourselves.
 set(CMAKE_REQUIRED_DEFINITIONS -D_XOPEN_SOURCE=600)
-check_symbol_exists("cfree" "stdlib.h;malloc.h" HAVE_DECL_CFREE)
 check_symbol_exists("posix_memalign" "stdlib.h;malloc.h" HAVE_DECL_POSIX_MEMALIGN)
 check_symbol_exists("memalign" "stdlib.h;malloc.h" HAVE_DECL_MEMALIGN)
 check_symbol_exists("valloc" "stdlib.h;malloc.h" HAVE_DECL_VALLOC)
 check_symbol_exists("pvalloc" "stdlib.h;malloc.h" HAVE_DECL_PVALLOC)
 set(CMAKE_REQUIRED_DEFINITIONS)
-
-if(HAVE_STRUCT_MALLINFO)
-    set(HAVE_STRUCT_MALLINFO 1)
-else()
-    set(HAVE_STRUCT_MALLINFO 0)
-endif()
-
-if(HAVE_STRUCT_MALLINFO2)
-    set(HAVE_STRUCT_MALLINFO2 1)
-else()
-    set(HAVE_STRUCT_MALLINFO2 0)
-endif()
 
 # We hardcode HAVE_MMAP to 1. There are no interesting systems anymore
 # without functional mmap. And our windows (except mingw) builds
@@ -312,15 +296,6 @@ check_c_source_compiles(
   "int main() { return __builtin_expect(main != 0, 1); }"
   HAVE_BUILTIN_EXPECT)
 
-check_c_source_compiles("
-  #include <unistd.h>
-  int main()
-  {
-    char** env = __environ;
-    return 0;
-  }"
-  HAVE___ENVIRON)
-
 if(enable_backtrace)
   check_symbol_exists("backtrace" "execinfo.h" HAVE_DECL_BACKTRACE)
   check_function_exists("backtrace" backtrace_exists)
@@ -366,9 +341,6 @@ set(ENABLE_AGGRESSIVE_DECOMMIT_BY_DEFAULT ${gperftools_enable_aggressive_decommi
 
 
 configure_file(cmake/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h @ONLY)
-configure_file(cmake/tcmalloc.h.in
-               ${CMAKE_CURRENT_BINARY_DIR}/gperftools/tcmalloc.h
-               @ONLY)
 
 if(GPERFTOOLS_BUILD_CPU_PROFILER OR
    GPERFTOOLS_BUILD_HEAP_PROFILER)
@@ -539,6 +511,9 @@ set(MINIMAL_MALLOC_SRC
   src/malloc_extension.cc)
 
 add_library(tcmalloc_minimal ${TCMALLOC_CC} ${MINIMAL_MALLOC_SRC})
+if(gperftools_enable_broken_install_targets)
+  install(TARGETS tcmalloc_minimal)
+endif()
 target_compile_definitions(tcmalloc_minimal PRIVATE NO_TCMALLOC_SAMPLES)
 target_link_options(tcmalloc_minimal INTERFACE ${TCMALLOC_FLAGS})
 target_link_libraries(tcmalloc_minimal PRIVATE common)
@@ -655,6 +630,10 @@ if(BUILD_TESTING)
   target_link_libraries(proc_maps_iterator_test common gtest)
   add_test(proc_maps_iterator_test proc_maps_iterator_test)
 
+  add_executable(for_each_line_test src/tests/for_each_line_test.cc)
+  target_link_libraries(for_each_line_test common gtest)
+  add_test(for_each_line_test for_each_line_test)
+
   add_executable(realloc_unittest src/tests/realloc_unittest.cc)
   target_link_libraries(realloc_unittest tcmalloc_minimal gtest)
   add_test(realloc_unittest realloc_unittest)
@@ -704,6 +683,9 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
   endif()
 
   add_library(tcmalloc_minimal_debug src/debugallocation.cc ${MINIMAL_MALLOC_SRC})
+  if(gperftools_enable_broken_install_targets)
+    install(TARGETS tcmalloc_minimal_debug)
+  endif()
   target_compile_definitions(tcmalloc_minimal_debug PRIVATE NO_TCMALLOC_SAMPLES)
   target_link_libraries(tcmalloc_minimal_debug PRIVATE symbolize low_level_alloc common)
 
@@ -776,6 +758,9 @@ if(GPERFTOOLS_BUILD_HEAP_PROFILER)
     src/malloc_backtrace.cc
     src/heap-checker-stub.cc)
   add_library(tcmalloc ${TCMALLOC_CC} ${FULL_MALLOC_SRC})
+  if(gperftools_enable_broken_install_targets)
+    install(TARGETS tcmalloc)
+  endif()
   target_compile_definitions(tcmalloc PRIVATE ${EMERGENCY_MALLOC_DEFINE})
   target_link_libraries(tcmalloc PRIVATE stacktrace low_level_alloc common)
   target_link_options(tcmalloc INTERFACE ${TCMALLOC_FLAGS})
@@ -794,8 +779,6 @@ if(GPERFTOOLS_BUILD_HEAP_PROFILER)
     target_link_libraries(tcmalloc_large_heap_fragmentation_unittest tcmalloc gtest)
     add_test(tcmalloc_large_heap_fragmentation_unittest tcmalloc_large_heap_fragmentation_unittest)
 
-    list(APPEND TESTS_ENVIRONMENT PPROF_PATH=${CMAKE_CURRENT_SOURCE_DIR}/src/pprof)
-
     add_executable(heap_checker_stub_test src/tests/heap-checker-stub-test.cc)
     target_link_libraries(heap_checker_stub_test tcmalloc)
     add_test(heap_checker_stub_test heap_checker_stub_test)
@@ -813,7 +796,6 @@ if(GPERFTOOLS_BUILD_HEAP_PROFILER)
     list(APPEND TESTS_ENVIRONMENT BINDIR=. TMPDIR=/tmp/perftools)
     set(sampling_test_SOURCES src/tests/sampling_test.cc)
     add_executable(sampling_test src/tests/sampling_test.cc)
-    target_compile_definitions(sampling_test PRIVATE PPROF_PATH=${CMAKE_CURRENT_SOURCE_DIR}/src/pprof)
     target_link_libraries(sampling_test tcmalloc)
     add_test(sampling_test sampling_test)
 
@@ -831,6 +813,9 @@ endif()
 if(GPERFTOOLS_BUILD_DEBUGALLOC)
   if(GPERFTOOLS_BUILD_HEAP_PROFILER)
     add_library(tcmalloc_debug src/debugallocation.cc ${FULL_MALLOC_SRC})
+    if(gperftools_enable_broken_install_targets)
+      install(TARGETS tcmalloc_debug)
+    endif()
     target_compile_definitions(tcmalloc_debug PRIVATE ${EMERGENCY_MALLOC_DEFINE})
     target_link_libraries(tcmalloc_debug PRIVATE symbolize low_level_alloc stacktrace common)
 
@@ -841,7 +826,6 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
       add_test(tcmalloc_debug_unittest tcmalloc_debug_unittest)
 
       add_executable(sampling_debug_test src/tests/sampling_test.cc)
-          target_compile_definitions(sampling_debug_test PRIVATE PPROF_PATH=${CMAKE_CURRENT_SOURCE_DIR}/src/pprof)
       target_link_libraries(sampling_debug_test tcmalloc_debug)
       add_test(sampling_debug_test sampling_debug_test)
 
@@ -857,10 +841,13 @@ endif()
 ### ------- CPU profiler
 if(GPERFTOOLS_BUILD_CPU_PROFILER)
 
-add_library(profiler
-    src/profiler.cc
-    src/profile-handler.cc
-    src/profiledata.cc)
+  add_library(profiler
+      src/profiler.cc
+      src/profile-handler.cc
+      src/profiledata.cc)
+  if(gperftools_enable_broken_install_targets)
+    install(TARGETS profiler)
+  endif()
   target_link_libraries(profiler PRIVATE stacktrace common)
 
   if(BUILD_TESTING)
@@ -879,19 +866,10 @@ add_library(profiler
 
     add_test(NAME profiler_unittest.sh
             COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/tests/profiler_unittest.sh")
-    set(PROFILER_UNITTEST_SRCS src/tests/profiler_unittest.cc
+
+    add_executable(profiler_unittest src/tests/profiler_unittest.cc
             src/tests/testutil.h src/tests/testutil.cc)
-    # TODO: get rid of the {1,2,3,4} multiplicity
-    add_executable(profiler1_unittest ${PROFILER_UNITTEST_SRCS})
-    target_compile_definitions(profiler1_unittest PRIVATE NO_THREADS)
-    target_link_libraries(profiler1_unittest PRIVATE profiler)
-    add_executable(profiler2_unittest ${PROFILER_UNITTEST_SRCS})
-    target_compile_definitions(profiler2_unittest PRIVATE NO_THREADS)
-    target_link_libraries(profiler2_unittest PRIVATE profiler)
-    add_executable(profiler3_unittest ${PROFILER_UNITTEST_SRCS})
-    target_link_libraries(profiler3_unittest PRIVATE profiler)
-    add_executable(profiler4_unittest ${PROFILER_UNITTEST_SRCS})
-    target_link_libraries(profiler4_unittest PRIVATE stacktrace profiler)
+    target_link_libraries(profiler_unittest PRIVATE profiler)
   endif()
 endif()
 

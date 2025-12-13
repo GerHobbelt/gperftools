@@ -4,12 +4,12 @@
 # make sure we're interpreted by some minimal autoconf
 AC_PREREQ([2.69])
 
-AC_INIT([gperftools],[2.16],[gperftools@googlegroups.com])
+AC_INIT([gperftools],[2.17.2],[gperftools@googlegroups.com])
 # Update this value for every release!  (A:B:C will map to foo.so.(A-C).C.B)
 # http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-TCMALLOC_SO_VERSION=9:18:5
-PROFILER_SO_VERSION=5:13:5
-TCMALLOC_AND_PROFILER_SO_VERSION=10:13:6
+TCMALLOC_SO_VERSION=10:3:6
+PROFILER_SO_VERSION=5:17:5
+TCMALLOC_AND_PROFILER_SO_VERSION=11:3:7
 
 AC_SUBST(TCMALLOC_SO_VERSION)
 AC_SUBST(PROFILER_SO_VERSION)
@@ -24,14 +24,6 @@ AM_INIT_AUTOMAKE([dist-zip foreign tar-ustar nostdinc])
 AC_CONFIG_HEADERS([src/config.h])
 
 AM_MAINTAINER_MODE()
-# Export the version information (for tc_version and friends)
-TC_VERSION_MAJOR=`expr "$PACKAGE_VERSION" : '\([[0-9]]*\)'`
-TC_VERSION_MINOR=`expr "$PACKAGE_VERSION" : '[[0-9]]*\.\([[0-9]]*\)'`
-TC_VERSION_PATCH=`expr "$PACKAGE_VERSION" : '[[0-9]]*\.[[0-9]]*\(.*\)$'`
-AC_SUBST(TC_VERSION_MAJOR)
-AC_SUBST(TC_VERSION_MINOR)
-AC_SUBST(TC_VERSION_PATCH)
-AC_SUBST(PACKAGE_STRING)
 
 # The user can choose not to compile in the heap-profiler, , or the
 # cpu-profiler.  There's also the possibility for a 'fully minimal'
@@ -210,8 +202,6 @@ AC_MSG_RESULT($ac_cv___attribute__aligned_fn)
 
 
 # TODO(csilvers): we could remove a lot when WITH_CPU_PROFILER etc is "no".
-AC_CHECK_TYPES([struct mallinfo],,, [#include <malloc.h>])
-AC_CHECK_TYPES([struct mallinfo2],,, [#include <malloc.h>])
 AC_CHECK_FUNCS(sbrk)            # for tcmalloc to get memory
 AC_CHECK_FUNCS(geteuid)         # for turning off services when run as root
 AC_CHECK_HEADERS(features.h)    # for vdso_support.h, __GLIBC__ macros
@@ -242,8 +232,7 @@ AC_SUBST(REGEX_LIBS)
 
 # We override a lot of memory allocation routines, not all of which are
 # standard.  For those the system doesn't declare, we'll declare ourselves.
-AC_CHECK_DECLS([cfree,
-                posix_memalign,
+AC_CHECK_DECLS([posix_memalign,
                 memalign,
                 valloc,
                 pvalloc],,,
@@ -251,18 +240,6 @@ AC_CHECK_DECLS([cfree,
                 #define _QNX_SOURCE 1
                 #include <stdlib.h>
                 #include <malloc.h>])
-
-if test "$ac_cv_type_struct_mallinfo" = yes; then
-  AC_SUBST(ac_cv_have_struct_mallinfo, 1)   # gperftools/tcmalloc.h needs this
-else
-  AC_SUBST(ac_cv_have_struct_mallinfo, 0)
-fi
-
-if test "$ac_cv_type_struct_mallinfo2" = yes; then
-  AC_SUBST(ac_cv_have_struct_mallinfo2, 1)   # gperftools/tcmalloc.h needs this
-else
-  AC_SUBST(ac_cv_have_struct_mallinfo2, 0)
-fi
 
 # We hardcode HAVE_MMAP to 1. There are no interesting systems anymore
 # without functional mmap. And our windows (except mingw) builds
@@ -293,30 +270,23 @@ AM_CONDITIONAL(ENABLE_STATIC, test "$enable_static" = yes)
 
 # We want to link in libunwind if it is enabled and exists.
 UNWIND_LIBS=
+UNWIND_PC_DEP=
 if test "$enable_libunwind" = yes; then
   AC_CHECK_HEADERS([libunwind.h],
                    [AC_CHECK_LIB(unwind, backtrace,
                      [UNWIND_LIBS=-lunwind
+                      UNWIND_PC_DEP=libunwind
                       AC_DEFINE([USE_LIBUNWIND], [1], [libunwind.h was found and is working])
                       will_use_libunwind=yes])])
 fi
 AC_SUBST(UNWIND_LIBS)
+AC_SUBST(UNWIND_PC_DEP)
 
 AC_ARG_ENABLE(frame_pointers,
               AS_HELP_STRING([--enable-frame-pointers],
                              [Add -fno-omit-frame-pointer to compile flags]),
 	      , enable_frame_pointers=no)
 AM_CONDITIONAL(ENABLE_FRAME_POINTERS, test "$enable_frame_pointers" = yes)
-
-AC_ARG_ENABLE([deprecated-pprof],
-              [AS_HELP_STRING([--disable-deprecated-pprof],
-                [do not install old deprecated and unmaintained bundled pprof
-(see github.com/google/pprof for supported version)])],
-              [enable_pprof="$enableval"],
-              [enable_pprof=yes])
-
-AM_CONDITIONAL(INSTALL_PPROF,
-               [test "x$enable_pprof" = xyes])
 
 AC_ARG_ENABLE([dynamic-sized-delete-support],
               [AS_HELP_STRING([--enable-dynamic-sized-delete-support],
@@ -388,15 +358,6 @@ AH_VERBATIM([__STDC_FORMAT_MACROS],
 #ifndef __STDC_FORMAT_MACROS
 # define __STDC_FORMAT_MACROS 1
 #endif])
-
-# Check if __environ is available (for GetenvBeforeMain)
-AC_MSG_CHECKING([for __environ])
-AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <unistd.h>],
-                                [char **env = __environ])],
-               [AC_DEFINE(HAVE___ENVIRON, 1,
-                          [Define to 1 if compiler supports __environ])
-                AC_MSG_RESULT([yes])],
-               [AC_MSG_RESULT([no])])
 
 AC_CACHE_CHECK([if target has functional __cxa_demangle],
                [perftools_cv_have_cxa_demangle],
@@ -480,7 +441,7 @@ AH_TOP([
 # Also, manually mark systems where we have to be careful how early
 # we run pthreads.  TODO(csilvers): turn this into an autoconf check.
 AH_BOTTOM([
-#ifdef WIN32
+#ifdef _WIN32
 // TODO(csilvers): include windows/port.h in every relevant source file instead?
 #include "windows/port.h"
 #endif
@@ -536,10 +497,17 @@ AS_IF([test "x$enable_aggressive_decommit_by_default" = xyes],
                  1,
                  [enable aggressive decommit by default])])
 
+AC_PATH_PROG(PPROF_PATH, pprof)
+AM_CONDITIONAL(SKIP_PPROF_TESTS, [test "x$PPROF_PATH" = "x"])
+AS_IF([test "x$PPROF_PATH" = "x"],
+      [AC_MSG_WARN([pprof tool not found. Will skip several unit tests that need it. Install via go install github.com/google/pprof@latest then add \$HOME/go/bin to PATH])])
+
+AC_PATH_PROG([ASCIIDOCTOR], [asciidoctor])
+AM_CONDITIONAL([MISSING_ASCIIDOCTOR], [test "x$ASCIIDOCTOR" = "x"])
+AS_IF([test "x$ASCIIDOCTOR" = "x"],
+      [AC_MSG_WARN([asciidoctor tool not found. Will skip building .html documentation from .adoc])])
+AC_ARG_VAR(ASCIIDOCTOR_FLAGS, [flags to pass to asciidoctor])
+
 # Write generated configuration file
-# NOTE: vsprojects/gperftools/tcmalloc.h is checked in
-AC_CONFIG_FILES([Makefile
-                 src/gperftools/tcmalloc.h
-                 vsprojects/include/gperftools/tcmalloc.h:src/gperftools/tcmalloc.h.in
-                 ])
+AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
