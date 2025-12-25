@@ -5,14 +5,9 @@ cmake_minimum_required(VERSION 3.12)
 
 set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the build type")
 
-project(gperftools VERSION 2.16 LANGUAGES C CXX
+project(gperftools VERSION 2.17.2 LANGUAGES C CXX
         DESCRIPTION "Performance tools for C++"
         HOMEPAGE_URL https://github.com/gperftools/gperftools)
-
-# Update this value for every release!
-set(TCMALLOC_SO_VERSION 9.18.5)
-set(PROFILER_SO_VERSION 5.13.5)
-set(TCMALLOC_AND_PROFILER_SO_VERSION 10.13.6)
 
 # The user can choose not to compile in the heap-profiler, or the
 # cpu-profiler.  There's also the possibility for a 'fully minimal'
@@ -300,15 +295,6 @@ option(gperftools_emergency_malloc
 check_c_source_compiles(
   "int main() { return __builtin_expect(main != 0, 1); }"
   HAVE_BUILTIN_EXPECT)
-
-check_c_source_compiles("
-  #include <unistd.h>
-  int main()
-  {
-    char** env = __environ;
-    return 0;
-  }"
-  HAVE___ENVIRON)
 
 if(enable_backtrace)
   check_symbol_exists("backtrace" "execinfo.h" HAVE_DECL_BACKTRACE)
@@ -644,6 +630,10 @@ if(BUILD_TESTING)
   target_link_libraries(proc_maps_iterator_test common gtest)
   add_test(proc_maps_iterator_test proc_maps_iterator_test)
 
+  add_executable(for_each_line_test src/tests/for_each_line_test.cc)
+  target_link_libraries(for_each_line_test common gtest)
+  add_test(for_each_line_test for_each_line_test)
+
   add_executable(realloc_unittest src/tests/realloc_unittest.cc)
   target_link_libraries(realloc_unittest tcmalloc_minimal gtest)
   add_test(realloc_unittest realloc_unittest)
@@ -876,19 +866,10 @@ if(GPERFTOOLS_BUILD_CPU_PROFILER)
 
     add_test(NAME profiler_unittest.sh
             COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/tests/profiler_unittest.sh")
-    set(PROFILER_UNITTEST_SRCS src/tests/profiler_unittest.cc
+
+    add_executable(profiler_unittest src/tests/profiler_unittest.cc
             src/tests/testutil.h src/tests/testutil.cc)
-    # TODO: get rid of the {1,2,3,4} multiplicity
-    add_executable(profiler1_unittest ${PROFILER_UNITTEST_SRCS})
-    target_compile_definitions(profiler1_unittest PRIVATE NO_THREADS)
-    target_link_libraries(profiler1_unittest PRIVATE profiler)
-    add_executable(profiler2_unittest ${PROFILER_UNITTEST_SRCS})
-    target_compile_definitions(profiler2_unittest PRIVATE NO_THREADS)
-    target_link_libraries(profiler2_unittest PRIVATE profiler)
-    add_executable(profiler3_unittest ${PROFILER_UNITTEST_SRCS})
-    target_link_libraries(profiler3_unittest PRIVATE profiler)
-    add_executable(profiler4_unittest ${PROFILER_UNITTEST_SRCS})
-    target_link_libraries(profiler4_unittest PRIVATE stacktrace profiler)
+    target_link_libraries(profiler_unittest PRIVATE profiler)
   endif()
 endif()
 

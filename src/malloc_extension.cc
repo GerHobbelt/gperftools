@@ -52,6 +52,10 @@
 
 #include "gperftools/tcmalloc.h"
 
+#include "internal_logging.h"
+#include "static_vars.h"
+#include "thread_cache.h"
+
 static void DumpAddressMap(std::string* result) {
   tcmalloc::StringGenericWriter writer(result);
   writer.AppendStr("\nMAPPED_LIBRARIES:\n");
@@ -170,7 +174,8 @@ MallocExtension* MallocExtension::instance() {
   // if MallocExtension isn't set up yet, it could be we're called
   // super-early. Trigger tcmalloc initialization and assume it will
   // set up instance().
-  tc_free(tc_malloc(32));
+  tcmalloc::ThreadCache::EnsureMallocInitialized();
+
   return instance();
 }
 

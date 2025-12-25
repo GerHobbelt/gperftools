@@ -39,6 +39,8 @@
 /debugallocation_test.sh
 /depcomp
 /docs/*.html
+/for_each_line_test
+/for_each_line_test.exe
 /frag_unittest
 /frag_unittest.exe
 /function_ref_test
@@ -99,15 +101,11 @@
 /page_heap_test.exe
 /pagemap_unittest
 /pagemap_unittest.exe
-/pprof-symbolize
 /proc_maps_iterator_test
 /proc_maps_iterator_test.exe
 /profile_handler_unittest
 /profiledata_unittest
-/profiler1_unittest
-/profiler2_unittest
-/profiler3_unittest
-/profiler4_unittest
+/profiler_unittest
 /profiler_unittest.sh
 /realloc_debug_unittest
 /realloc_unittest

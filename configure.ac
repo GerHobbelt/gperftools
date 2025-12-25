@@ -4,12 +4,12 @@
 # make sure we're interpreted by some minimal autoconf
 AC_PREREQ([2.69])
 
-AC_INIT([gperftools],[2.16],[gperftools@googlegroups.com])
+AC_INIT([gperftools],[2.17.2],[gperftools@googlegroups.com])
 # Update this value for every release!  (A:B:C will map to foo.so.(A-C).C.B)
 # http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-TCMALLOC_SO_VERSION=9:18:5
-PROFILER_SO_VERSION=5:13:5
-TCMALLOC_AND_PROFILER_SO_VERSION=10:13:6
+TCMALLOC_SO_VERSION=10:3:6
+PROFILER_SO_VERSION=5:17:5
+TCMALLOC_AND_PROFILER_SO_VERSION=11:3:7
 
 AC_SUBST(TCMALLOC_SO_VERSION)
 AC_SUBST(PROFILER_SO_VERSION)
@@ -24,14 +24,6 @@ AM_INIT_AUTOMAKE([dist-zip foreign tar-ustar nostdinc])
 AC_CONFIG_HEADERS([src/config.h])
 
 AM_MAINTAINER_MODE()
-# Export the version information (for tc_version and friends)
-TC_VERSION_MAJOR=`expr "$PACKAGE_VERSION" : '\([[0-9]]*\)'`
-TC_VERSION_MINOR=`expr "$PACKAGE_VERSION" : '[[0-9]]*\.\([[0-9]]*\)'`
-TC_VERSION_PATCH=`expr "$PACKAGE_VERSION" : '[[0-9]]*\.[[0-9]]*\(.*\)$'`
-AC_SUBST(TC_VERSION_MAJOR)
-AC_SUBST(TC_VERSION_MINOR)
-AC_SUBST(TC_VERSION_PATCH)
-AC_SUBST(PACKAGE_STRING)
 
 # The user can choose not to compile in the heap-profiler, , or the
 # cpu-profiler.  There's also the possibility for a 'fully minimal'
@@ -366,15 +358,6 @@ AH_VERBATIM([__STDC_FORMAT_MACROS],
 #ifndef __STDC_FORMAT_MACROS
 # define __STDC_FORMAT_MACROS 1
 #endif])
-
-# Check if __environ is available (for GetenvBeforeMain)
-AC_MSG_CHECKING([for __environ])
-AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <unistd.h>],
-                                [char **env = __environ])],
-               [AC_DEFINE(HAVE___ENVIRON, 1,
-                          [Define to 1 if compiler supports __environ])
-                AC_MSG_RESULT([yes])],
-               [AC_MSG_RESULT([no])])
 
 AC_CACHE_CHECK([if target has functional __cxa_demangle],
                [perftools_cv_have_cxa_demangle],

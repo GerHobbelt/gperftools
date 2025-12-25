@@ -1,5 +1,4 @@
-// -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
-// Copyright (c) 2014, gperftools Contributors
+// Copyright 2025, Google Inc.
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -28,35 +27,12 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef EMERGENCY_MALLOC_H
-#define EMERGENCY_MALLOC_H
-#include "config.h"
+// Unit test for Google Test's --gtest_fail_if_no_test_linked flag.
+//
+// This program will be invoked from a Python test.
+// Don't run it directly.
 
-#include <stddef.h>
+#include "gtest/gtest.h"
 
-#include "base/basictypes.h"
-#include "common.h"
-#include "thread_cache_ptr.h"
-
-namespace tcmalloc {
-
-static constexpr uintptr_t kEmergencyArenaShift = 20+4; // 16 megs
-static constexpr uintptr_t kEmergencyArenaSize = uintptr_t{1} << kEmergencyArenaShift;
-
-ATTRIBUTE_VISIBILITY_HIDDEN extern char *emergency_arena_start;
-ATTRIBUTE_VISIBILITY_HIDDEN extern uintptr_t emergency_arena_start_shifted;;
-
-ATTRIBUTE_VISIBILITY_HIDDEN void *EmergencyMalloc(size_t size);
-ATTRIBUTE_VISIBILITY_HIDDEN void EmergencyFree(void *p);
-ATTRIBUTE_VISIBILITY_HIDDEN void *EmergencyRealloc(void *old_ptr, size_t new_size);
-ATTRIBUTE_VISIBILITY_HIDDEN size_t EmergencyAllocatedSize(const void* p);
-
-static inline bool IsEmergencyPtr(const void *_ptr) {
-  uintptr_t ptr = reinterpret_cast<uintptr_t>(_ptr);
-  return PREDICT_FALSE((ptr >> kEmergencyArenaShift) == emergency_arena_start_shifted)
-    && emergency_arena_start_shifted;
-}
-
-} // namespace tcmalloc
-
-#endif
+// A dummy test that is disabled.
+TEST(SomeTest, DISABLED_Test1) {}

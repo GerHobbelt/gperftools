@@ -73,15 +73,15 @@ static int volatile *g_ticks_count = ([] () {
 std::mutex mutex;
 
 static void test_other_thread() {
-#ifndef NO_THREADS
   ProfilerRegisterThread();
 
   int result = 0;
   char b[128];
-  // Get at least 30 ticks
-  int limit = *g_ticks_count + 30;
 
   std::lock_guard ml(mutex);
+
+  // Get at least 30 ticks
+  int limit = *g_ticks_count + 30;
 
   while (*g_ticks_count < limit) {
     for (int i = 0; i < g_iters * 10; ++i ) {
@@ -91,16 +91,16 @@ static void test_other_thread() {
     (void)noopt(b); // 'consume' b. Ensure that smart compiler doesn't
                     // remove snprintf call
   }
-#endif
 }
 
 static void test_main_thread() {
   int result = 0;
   char b[128];
-  // Get at least 30 ticks
-  int limit = *g_ticks_count + 30;
 
   std::lock_guard ml(mutex);
+
+  // Get at least 30 ticks
+  int limit = *g_ticks_count + 30;
 
   while (*g_ticks_count < limit) {
     for (int i = 0; i < g_iters * 10; ++i ) {

@@ -44,9 +44,9 @@
 /* Define the version number so folks can check against it */
 /* Note, maintainers are expected to update this to match configure.ac for each release */
 #define TC_VERSION_MAJOR  2
-#define TC_VERSION_MINOR  16
-#define TC_VERSION_PATCH  ""
-#define TC_VERSION_STRING "gperftools 2.16"
+#define TC_VERSION_MINOR  17
+#define TC_VERSION_PATCH  ".2"
+#define TC_VERSION_STRING "gperftools 2.17.2"
 
 #if __GLIBC__ * 1000 + __GLIBC_MINOR__ >= 2033
 /* glibc 2.33 has mallinfo2 */
@@ -110,7 +110,11 @@ extern "C" {
   PERFTOOLS_DLL_DECL void* tc_malloc(size_t size) PERFTOOLS_NOTHROW;
   PERFTOOLS_DLL_DECL void* tc_malloc_skip_new_handler(size_t size) PERFTOOLS_NOTHROW;
   PERFTOOLS_DLL_DECL void tc_free(void* ptr) PERFTOOLS_NOTHROW;
+
+  // Versions of C23 sized free stuff
   PERFTOOLS_DLL_DECL void tc_free_sized(void *ptr, size_t size) PERFTOOLS_NOTHROW;
+  PERFTOOLS_DLL_DECL void tc_free_aligned_sized(void* ptr, size_t align, size_t size) PERFTOOLS_NOTHROW;
+
   PERFTOOLS_DLL_DECL void* tc_realloc(void* ptr, size_t size) PERFTOOLS_NOTHROW;
   PERFTOOLS_DLL_DECL void* tc_calloc(size_t nmemb, size_t size) PERFTOOLS_NOTHROW;
   PERFTOOLS_DLL_DECL void tc_cfree(void* ptr) PERFTOOLS_NOTHROW;

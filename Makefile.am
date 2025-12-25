@@ -181,6 +181,11 @@ proc_maps_iterator_test_SOURCES = src/tests/proc_maps_iterator_test.cc
 proc_maps_iterator_test_CPPFLAGS = $(gtest_CPPFLAGS)
 proc_maps_iterator_test_LDADD = libcommon.la libgtest.la
 
+TESTS += for_each_line_test
+for_each_line_test_SOURCES = src/tests/for_each_line_test.cc
+for_each_line_test_CPPFLAGS = $(gtest_CPPFLAGS)
+for_each_line_test_LDADD = libcommon.la libgtest.la
+
 if WITH_HEAP_PROFILER_OR_CHECKER
 TESTS += low_level_alloc_unittest
 low_level_alloc_unittest_SOURCES = src/tests/low_level_alloc_unittest.cc
@@ -774,32 +779,16 @@ TESTS += profiler_unittest.sh$(EXEEXT)
 profiler_unittest_sh_SOURCES = src/tests/profiler_unittest.sh
 noinst_SCRIPTS += $(profiler_unittest_sh_SOURCES)
 profiler_unittest.sh$(EXEEXT): $(top_srcdir)/$(profiler_unittest_sh_SOURCES) \
-                               profiler1_unittest profiler2_unittest \
-                               profiler3_unittest profiler4_unittest
+                               profiler_unittest
 	rm -f $@
 	cp -p $(top_srcdir)/$(profiler_unittest_sh_SOURCES) $@
 
 # These are sub-programs used by profiler_unittest.sh
-noinst_PROGRAMS += profiler1_unittest profiler2_unittest profiler3_unittest \
-                   profiler4_unittest
-PROFILER_UNITTEST_SRCS = src/tests/profiler_unittest.cc \
-                         src/tests/testutil.cc
-profiler1_unittest_SOURCES = $(PROFILER_UNITTEST_SRCS)
-profiler1_unittest_CXXFLAGS = -g -DNO_THREADS $(AM_CXXFLAGS)
-profiler1_unittest_LDADD = libprofiler.la
-profiler2_unittest_SOURCES = $(PROFILER_UNITTEST_SRCS)
-profiler2_unittest_CXXFLAGS = -g -DNO_THREADS $(AM_CXXFLAGS)
-profiler2_unittest_LDADD = -lstacktrace -lprofiler
-# We depend on -lprofiler but haven't yet said how to build it.  Do so now.
-profiler2_unittest_DEPENDENCIES = libprofiler.la
-profiler3_unittest_SOURCES = $(PROFILER_UNITTEST_SRCS)
-profiler3_unittest_CXXFLAGS = -g $(AM_CXXFLAGS)
-profiler3_unittest_LDADD = libprofiler.la
-profiler4_unittest_SOURCES = $(PROFILER_UNITTEST_SRCS)
-profiler4_unittest_CXXFLAGS = -g $(AM_CXXFLAGS)
-profiler4_unittest_LDADD = -lstacktrace -lprofiler
-# We depend on -lprofiler but haven't yet said how to build it.  Do so now.
-profiler4_unittest_DEPENDENCIES = libprofiler.la
+noinst_PROGRAMS += profiler_unittest
+
+profiler_unittest_SOURCES = src/tests/profiler_unittest.cc \
+                             src/tests/testutil.cc
+profiler_unittest_LDADD = libprofiler.la
 endif !SKIP_PPROF_TESTS
 
 endif WITH_CPU_PROFILER
@@ -918,7 +907,7 @@ EXTRA_DIST = $(SCRIPTS) \
              $(top_srcdir)/src/tests/*h \
              $(top_srcdir)/src/windows/*h $(top_srcdir)/src/gperftools/*h \
              CMakeLists.txt cmake \
-             generic-config/config.h .bazelrc BUILD MODULE.bazel
+             generic-config/config.h .bazelrc BUILD.bazel MODULE.bazel
 
 # Windows wants write permission to .vcxproj files and maybe even sln files.
 dist-hook: $(top_distdir)/ChangeLog

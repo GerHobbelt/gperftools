@@ -1,5 +1,5 @@
-// -*- Mode: c; c-basic-offset: 2; indent-tabs-mode: nil -*-
-/* Copyright (c) 2008-2009, Google Inc.
+/* -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
+ * Copyright (c) 2025, gperftools Contributors
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,40 +27,29 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * ---
- * Author: Kostya Serebryany
  */
-
-#include "config.h"
+#ifndef ENVIRON_H
+#define ENVIRON_H
 #include <stdlib.h>
-#include <string.h>
 
-#if defined __has_include
-#if __has_include(<valgrind/valgrind.h>)
-#include <valgrind/valgrind.h>
-#endif  // __has_include
-#endif // defined __has_include
+#ifdef _WIN32
+#undef environ
+#define environ _environ
+#endif  // _WIN32
 
-#include "base/dynamic_annotations.h"
-#include "getenv_safe.h" // for TCMallocGetenvSafe
-
-static int GetRunningOnValgrind(void) {
-#ifdef RUNNING_ON_VALGRIND
-  if (RUNNING_ON_VALGRIND) return 1;
+// POSIX standard oddly requires users to define environ variable
+// themselves. 3 of 3 bsd-derived systems I tested on actually
+// don't bother having environ in their headers. Relevant ticket has
+// been closed as "won't fix" in FreeBSD ticket tracker:
+// https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=238672
+//
+// Just in case, we wrap this declaration with ifdef, so that if
+// anyone has environ as macro (see windows case above), we won't be
+// breaking anything.
+#if !defined(environ)
+extern "C" {
+extern char** environ;
+}
 #endif
-  const char *running_on_valgrind_str = TCMallocGetenvSafe("RUNNING_ON_VALGRIND");
-  if (running_on_valgrind_str) {
-    return strcmp(running_on_valgrind_str, "0") != 0;
-  }
-  return 0;
-}
 
-/* See the comments in dynamic_annotations.h */
-int RunningOnValgrind(void) {
-  static volatile int running_on_valgrind = -1;
-  int local_running_on_valgrind = running_on_valgrind;
-  if (local_running_on_valgrind == -1)
-    running_on_valgrind = local_running_on_valgrind = GetRunningOnValgrind();
-  return local_running_on_valgrind;
-}
+#endif  // ENVIRON_H
