@@ -32,76 +32,22 @@
 // Author: Petr Hosek
 
 #ifndef _WIN32
-# error You should only be including windows/system-alloc.cc in a windows environment!
+#error You should only be including windows/system-alloc.cc in a windows environment!
 #endif
 
 #include <config.h>
 #include <windows.h>
-#include <algorithm> // std::min
+#include <algorithm>  // std::min
 #include <gperftools/malloc_extension.h>
 #include "base/logging.h"
 #include "base/spinlock.h"
 #include "internal_logging.h"
 #include "system-alloc.h"
 
-static SpinLock spinlock;
-
-// The current system allocator declaration
-SysAllocator* tcmalloc_sys_alloc;
-// Number of bytes taken from system.
-size_t TCMalloc_SystemTaken;
-
-class VirtualSysAllocator : public SysAllocator {
-public:
-  VirtualSysAllocator() : SysAllocator() {
-  }
-  void* Alloc(size_t size, size_t *actual_size, size_t alignment);
-};
-static tcmalloc::StaticStorage<VirtualSysAllocator> virtual_space;
-
-// This is mostly like MmapSysAllocator::Alloc, except it does these weird
-// munmap's in the middle of the page, which is forbidden in windows.
-void* VirtualSysAllocator::Alloc(size_t size, size_t *actual_size,
-                                 size_t alignment) {
-  // Align on the pagesize boundary
-  const int pagesize = getpagesize();
-  if (alignment < pagesize) alignment = pagesize;
-  size = ((size + alignment - 1) / alignment) * alignment;
-
-  // Report the total number of bytes the OS actually delivered.  This might be
-  // greater than |size| because of alignment concerns.  The full size is
-  // necessary so that adjacent spans can be coalesced.
-  // TODO(antonm): proper processing of alignments
-  // in actual_size and decommitting.
-  if (actual_size) {
-    *actual_size = size;
-  }
-
-  // We currently do not support alignments larger than the pagesize or
-  // alignments that are not multiples of the pagesize after being floored.
-  // If this ability is needed it can be done by the caller (assuming it knows
-  // the page size).
-  assert(alignment <= pagesize);
-
-  void* result = VirtualAlloc(0, size,
-                              MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
-  if (result == nullptr)
-    return nullptr;
-
-  // If the result is not aligned memory fragmentation will result which can
-  // lead to pathological memory use.
-  assert((reinterpret_cast<uintptr_t>(result) & (alignment - 1)) == 0);
-
-  return result;
-}
-
 #ifdef _MSC_VER
 
-extern "C" SysAllocator* tc_get_sysalloc_override(SysAllocator *def);
-extern "C" SysAllocator* tc_get_sysalloc_default(SysAllocator *def)
-{
-  return def;
-}
+extern "C" SysAllocator* tc_get_sysalloc_override(SysAllocator* def);
+extern "C" SysAllocator* tc_get_sysalloc_default(SysAllocator* def) { return def; }
 
 #if defined(_M_IX86)
 #pragma comment(linker, "/alternatename:_tc_get_sysalloc_override=_tc_get_sysalloc_default")
@@ -109,25 +55,80 @@ extern "C" SysAllocator* tc_get_sysalloc_default(SysAllocator *def)
 #pragma comment(linker, "/alternatename:tc_get_sysalloc_override=tc_get_sysalloc_default")
 #endif
 
-#else // !_MSC_VER
+#else  // !_MSC_VER
 
-extern "C" ATTRIBUTE_NOINLINE
-SysAllocator* tc_get_sysalloc_override(SysAllocator *def)
-{
-  return def;
-}
+extern "C" ATTRIBUTE_NOINLINE SysAllocator* tc_get_sysalloc_override(SysAllocator* def) { return def; }
 
 #endif
 
+// Number of bytes taken from system.
+size_t TCMalloc_SystemTaken;
+
+// The current system allocator declaration
+SysAllocator* tcmalloc_sys_alloc;
+
+namespace {
+
+SpinLock spinlock;
+
+class VirtualSysAllocator : public SysAllocator {
+ public:
+  VirtualSysAllocator() : SysAllocator() {}
+  void* Alloc(size_t size, size_t* actual_size, size_t alignment);
+};
+
+tcmalloc::StaticStorage<VirtualSysAllocator> virtual_space;
+
+size_t GetAllocationGranularity() {
+  static tcmalloc::TrivialOnce once;
+  static size_t value;
+  once.RunOnce([]() {
+    SYSTEM_INFO system_info;
+    GetSystemInfo(&system_info);
+    value = system_info.dwAllocationGranularity;
+  });
+  return value;
+}
+
+// This is mostly like MmapSysAllocator::Alloc, except it does these weird
+// munmap's in the middle of the page, which is forbidden in windows.
+void* VirtualSysAllocator::Alloc(size_t size, size_t* actual_size, size_t alignment) {
+  // Align on the allocation granularity boundary
+  const int granularity = GetAllocationGranularity();
+  if (alignment < granularity) alignment = granularity;
+  size = ((size + alignment - 1) / alignment) * alignment;
+
+  // Report the total number of bytes the OS actually delivered.  This might be
+  // greater than |size| because of alignment concerns.  The full size is
+  // necessary so that adjacent spans can be coalesced.
+  // in actual_size and decommitting.
+  if (actual_size) {
+    *actual_size = size;
+  }
+
+  // NOTE: this code doesn't support larger alignments but this is
+  // unused by the callers anyways.
+  ASSERT(alignment <= granularity);
+
+  void* result = VirtualAlloc(0, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+  if (result == nullptr) return nullptr;
+
+  // If the result is not aligned memory fragmentation will result which can
+  // lead to pathological memory use.
+  ASSERT((reinterpret_cast<uintptr_t>(result) & (alignment - 1)) == 0);
+
+  return result;
+}
+
 static bool system_alloc_inited = false;
 void InitSystemAllocators(void) {
-  VirtualSysAllocator *alloc = virtual_space.Construct();
+  VirtualSysAllocator* alloc = virtual_space.Construct();
   tcmalloc_sys_alloc = tc_get_sysalloc_override(alloc);
 }
 
-extern PERFTOOLS_DLL_DECL
-void* TCMalloc_SystemAlloc(size_t size, size_t *actual_size,
-			   size_t alignment) {
+}  // anonymous namespace
+
+extern PERFTOOLS_DLL_DECL void* TCMalloc_SystemAlloc(size_t size, size_t* actual_size, size_t alignment) {
   SpinLockHolder lock_holder(&spinlock);
 
   if (!system_alloc_inited) {
@@ -146,10 +147,8 @@ void* TCMalloc_SystemAlloc(size_t size, size_t *actual_size,
   return result;
 }
 
-extern PERFTOOLS_DLL_DECL
-bool TCMalloc_SystemRelease(void* start, size_t length) {
-  if (VirtualFree(start, length, MEM_DECOMMIT))
-    return true;
+extern PERFTOOLS_DLL_DECL bool TCMalloc_SystemRelease(void* start, size_t length) {
+  if (VirtualFree(start, length, MEM_DECOMMIT)) return true;
 
   // The decommit may fail if the memory region consists of allocations
   // from more than one call to VirtualAlloc.  In this case, fall back to
@@ -161,20 +160,20 @@ bool TCMalloc_SystemRelease(void* start, size_t length) {
   MEMORY_BASIC_INFORMATION info;
   while (ptr < end) {
     size_t resultSize = VirtualQuery(ptr, &info, sizeof(info));
-    assert(resultSize == sizeof(info));
+    ASSERT(resultSize == sizeof(info));
+    (void)resultSize;
     size_t decommitSize = std::min<size_t>(info.RegionSize, end - ptr);
     BOOL success = VirtualFree(ptr, decommitSize, MEM_DECOMMIT);
-    assert(success == TRUE);
+    ASSERT(success == TRUE);
+    (void)success;
     ptr += decommitSize;
   }
 
   return true;
 }
 
-extern PERFTOOLS_DLL_DECL
-void TCMalloc_SystemCommit(void* start, size_t length) {
-  if (VirtualAlloc(start, length, MEM_COMMIT, PAGE_READWRITE) == start)
-    return;
+extern PERFTOOLS_DLL_DECL void TCMalloc_SystemCommit(void* start, size_t length) {
+  if (VirtualAlloc(start, length, MEM_COMMIT, PAGE_READWRITE) == start) return;
 
   // The commit may fail if the memory region consists of allocations
   // from more than one call to VirtualAlloc.  In this case, fall back to
@@ -186,18 +185,19 @@ void TCMalloc_SystemCommit(void* start, size_t length) {
   MEMORY_BASIC_INFORMATION info;
   while (ptr < end) {
     size_t resultSize = VirtualQuery(ptr, &info, sizeof(info));
-    assert(resultSize == sizeof(info));
+    ASSERT(resultSize == sizeof(info));
+    (void)resultSize;
 
     size_t commitSize = std::min<size_t>(info.RegionSize, end - ptr);
-    void* newAddress = VirtualAlloc(ptr, commitSize, MEM_COMMIT,
-                                    PAGE_READWRITE);
-    assert(newAddress == ptr);
+    void* newAddress = VirtualAlloc(ptr, commitSize, MEM_COMMIT, PAGE_READWRITE);
+    ASSERT(newAddress == ptr);
+    (void)newAddress;
     ptr += commitSize;
   }
 }
 
-bool RegisterSystemAllocator(SysAllocator *allocator, int priority) {
-  return false;   // we don't allow registration on windows, right now
+bool RegisterSystemAllocator(SysAllocator* allocator, int priority) {
+  return false;  // we don't allow registration on windows, right now
 }
 
 void DumpSystemAllocatorStats(TCMalloc_Printer* printer) {

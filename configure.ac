@@ -4,12 +4,12 @@
 # make sure we're interpreted by some minimal autoconf
 AC_PREREQ([2.69])
 
-AC_INIT([gperftools],[2.17.2],[gperftools@googlegroups.com])
+AC_INIT([gperftools],[2.18],[gperftools@googlegroups.com])
 # Update this value for every release!  (A:B:C will map to foo.so.(A-C).C.B)
 # http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-TCMALLOC_SO_VERSION=10:3:6
-PROFILER_SO_VERSION=5:17:5
-TCMALLOC_AND_PROFILER_SO_VERSION=11:3:7
+TCMALLOC_SO_VERSION=10:4:6
+PROFILER_SO_VERSION=5:18:5
+TCMALLOC_AND_PROFILER_SO_VERSION=11:4:7
 
 AC_SUBST(TCMALLOC_SO_VERSION)
 AC_SUBST(PROFILER_SO_VERSION)
@@ -508,55 +508,6 @@ AS_IF([test "x$ASCIIDOCTOR" = "x"],
       [AC_MSG_WARN([asciidoctor tool not found. Will skip building .html documentation from .adoc])])
 AC_ARG_VAR(ASCIIDOCTOR_FLAGS, [flags to pass to asciidoctor])
 
-# Generate pkgconfig files to inform others how to compile/link with
-# us.
-AC_CONFIG_COMMANDS([pkgconfig-generator], [
-  cat > libtcmalloc.pc <<EOF
-prefix=$prefix
-exec_prefix=`echo "$exec_prefix" | sed "s@^$prefix@\\\${prefix}@"`
-libdir=`echo "$libdir" | sed "s@^$exec_prefix@\\\${exec_prefix}@"`
-includedir=`echo "$includedir" | sed "s@^$prefix@\\\${prefix}@"`
-
-Name: $PACKAGE
-Version: $VERSION
-Description: Performance tools for C++
-URL: https://github.com/gperftools/gperftools
-Requires: $UNWIND_PC_DEP
-Libs: -L\${libdir} -ltcmalloc
-Libs.private: $PTHREAD_CFLAGS $PTHREAD_LIBS
-Cflags: -I\${includedir}
-EOF
-
-  cat > libtcmalloc_minimal.pc <<EOF
-prefix=$prefix
-exec_prefix=`echo "$exec_prefix" | sed "s@^$prefix@\\\${prefix}@"`
-libdir=`echo "$libdir" | sed "s@^$exec_prefix@\\\${exec_prefix}@"`
-includedir=`echo "$includedir" | sed "s@^$prefix@\\\${prefix}@"`
-
-Name: $PACKAGE
-Version: $VERSION
-Description: Performance tools for C++
-URL: https://github.com/gperftools/gperftools
-Requires:
-Libs: -L\${libdir} -ltcmalloc_minimal
-Libs.private: $PTHREAD_CFLAGS $PTHREAD_LIBS
-Cflags: -I\${includedir}
-EOF
-
-  cat libtcmalloc.pc | sed s/-ltcmalloc/-ltcmalloc_debug/ > libtcmalloc_debug.pc
-  cat libtcmalloc_minimal.pc | sed s/-ltcmalloc_minimal/-ltcmalloc_minimal_debug/ > libtcmalloc_minimal_debug.pc
-  cat libtcmalloc.pc | sed s/-ltcmalloc/-lprofiler/ > libprofiler.pc
-], [
-  PACKAGE="$PACKAGE_NAME"
-  VERSION="$PACKAGE_VERSION"
-  UNWIND_PC_DEP="$UNWIND_PC_DEP"
-  PTHREAD_CFLAGS="$PTHREAD_CFLAGS"
-  PTHREAD_LIBS="$PTHREAD_LIBS"
-  prefix="$prefix"
-  exec_prefix="$exec_prefix"
-  libdir="$libdir"
-  includedir="$includedir"
-])
-
+# Write generated configuration file
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
