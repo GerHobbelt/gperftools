@@ -703,7 +703,9 @@ static void TestCalloc(size_t n, size_t s, bool ok) {
 
 // This makes sure that reallocing a small number of bytes in either
 // direction doesn't cause us to allocate new memory.
-TEST(TCMallocTest, Realloc) {
+class ReallocTest : public ::testing::TestWithParam<size_t> {};
+
+TEST_P(ReallocTest, Realloc) {
   if (TestingPortal::Get()->IsDebuggingMalloc()) {
     // debug alloc doesn't try to minimize reallocs
     return;
@@ -716,25 +718,40 @@ TEST(TCMallocTest, Realloc) {
   // turn off sampling
   tcmalloc::Cleanup cleanup = SetFlag(&TestingPortal::Get()->GetSampleParameter(), 0);
 
-  int start_sizes[] = { 100, 1000, 10000, 100000 };
-  int deltas[] = { 1, -2, 4, -8, 16, -32, 64, -128 };
+  size_t original_size = GetParam();
+  void* p = noopt(malloc(original_size));
+  ASSERT_NE(p, nullptr);
 
-  for (int s = 0; s < sizeof(start_sizes)/sizeof(*start_sizes); ++s) {
-    void* p = noopt(malloc(start_sizes[s]));
-    ASSERT_NE(p, nullptr);
-    // The larger the start-size, the larger the non-reallocing delta.
-    for (int d = 0; d < (s+1) * 2; ++d) {
-      void* new_p = noopt(realloc)(p, start_sizes[s] + deltas[d]);
-      ASSERT_EQ(p, new_p);  // realloc should not allocate new memory
-    }
-    // Test again, but this time reallocing smaller first.
-    for (int d = 0; d < s*2; ++d) {
-      void* new_p = noopt(realloc)(p, start_sizes[s] - deltas[d]);
-      ASSERT_EQ(p, new_p);  // realloc should not allocate new memory
-    }
-    free(p);
+  size_t usable_size = nallocx(original_size, 0);
+  // Validate out expectation
+  ASSERT_EQ(MallocExtension::instance()->GetAllocatedSize(p), usable_size);
+
+  // Lets find range of request sizes that round up to the same
+  // usable size by using nallocx.
+  size_t minimal_size = original_size;
+  while (nallocx(minimal_size - 1, 0) == usable_size) {
+    minimal_size--;
+    ASSERT_NE(minimal_size, 0);
   }
+
+  void* new_p;
+
+  // Check growing up to usable size then shrinking
+  new_p = noopt(realloc)(p, usable_size);
+  ASSERT_EQ(new_p, p);
+  new_p = noopt(realloc)(p, minimal_size);
+  ASSERT_EQ(new_p, p);
+
+  // Checking shrinking then growing
+  new_p = noopt(realloc)(p, minimal_size);
+  ASSERT_EQ(new_p, p);
+  new_p = noopt(realloc)(p, usable_size);
+  ASSERT_EQ(new_p, p);
+
+  free(p);
 }
+
+INSTANTIATE_TEST_SUITE_P(AllSizes, ReallocTest, ::testing::Values(100, 1000, 10000, 100000));
 
 #if __cpp_exceptions
 static int news_handled = 0;
@@ -1817,6 +1834,69 @@ TEST(TCMallocTest, EmergencyMallocNoHook) {
 
   free(p1);
   VerifyDeleteHookWasCalled();
+}
+
+TEST(TCMallocTest, ReallocVsFreeSized) {
+  constexpr size_t kLargerSize = 256;
+  constexpr size_t kSmallerSize = 160;
+
+  void* p = noopt(realloc)(nullptr, kLargerSize);
+  ASSERT_NE(p, nullptr);
+  p = noopt(realloc)(p, kSmallerSize);
+  ASSERT_NE(p, nullptr);
+
+  // what we want to test is this: tc_free_sized(p, 80);
+  // But how do we detect it's failure. So lets check explicitly
+
+  void* p2 = noopt(malloc)(kSmallerSize);
+  uint32_t small_size_class = TestingPortal::Get()->GetSizeClass(p2);
+  free(p2);
+
+  uint32_t realloced_size_class = TestingPortal::Get()->GetSizeClass(p);
+
+  ASSERT_EQ(realloced_size_class, small_size_class);
+
+  free(p);
+}
+
+TEST(TCMallocTest, ReallocOnInvalidPointer) {
+  if (TestingPortal::Get()->IsDebuggingMalloc()) {
+    return;
+  }
+
+  static uint64_t mock_object[2] = {0x3955fe9622eede93, 0x42};
+  static bool invalid_free_called;
+  static bool invalid_get_size_called;
+
+  auto invalid_free = +[] (void* ptr) {
+    EXPECT_EQ(ptr, mock_object);
+    invalid_free_called = true;
+  };
+
+  auto invalid_get_size = +[] (const void* ptr) -> size_t {
+    EXPECT_EQ(ptr, mock_object);
+    invalid_get_size_called = true;
+    return sizeof(mock_object[0]);
+  };
+
+  invalid_free_called = false;
+  invalid_get_size_called = false;
+
+  void* p = TestingPortal::Get()->RunReallocWithCallback(
+      mock_object, 128, invalid_free, invalid_get_size);
+
+  ASSERT_NE(p, nullptr);
+  ASSERT_EQ(MallocExtension::instance()->GetAllocatedSize(p), 128);
+  ASSERT_NE(p, mock_object);
+  ASSERT_TRUE(invalid_free_called);
+  ASSERT_TRUE(invalid_get_size_called);
+
+  // Verify that the contents of the object are preserved
+  ASSERT_EQ(memcmp(p, &mock_object[0], sizeof(mock_object[0])), 0);
+  // And that the second word of mock_object is not touched when copying
+  ASSERT_NE(memcmp(p, &mock_object[1], sizeof(mock_object[1])), 0);
+
+  free(p);
 }
 
 TEST(TCMallocTest, Version) {

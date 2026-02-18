@@ -75,7 +75,7 @@
 #include "base/threading.h"
 #include "malloc_backtrace.h"
 #include "malloc_hook-inl.h"
-#include "maybe_emergency_malloc.h"
+#include "maybe_emergency_malloc.h" // IWYU pragma: keep
 #include "safe_strerror.h"
 #include "symbolize.h"
 
@@ -1055,6 +1055,14 @@ public:
   ~DebugTestingPortal() override = default;
   bool IsDebuggingMalloc() override { return true; }
   int32_t& GetMaxFreeQueueSize() override { return FLAGS_max_free_queue_size; }
+  uint32_t GetSizeClass(void*) override { return 0; }
+  void* RunReallocWithCallback(
+    void* old_ptr, size_t new_size,
+    void (*invalid_free_fn)(void*),
+    size_t (*invalid_get_size_fn)(const void*)) override {
+    RAW_LOG(FATAL, "RunReallocWithCallback is not implemented for debugallocation");
+    return nullptr;
+  }
 };
 
 // ========================================================================= //
